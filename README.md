@@ -101,6 +101,9 @@ poetry run python -m src.main policy-check edit --role developer --auto
 poetry run python -m src.main resume-autofix <trace_id>
 poetry run python -m src.main incident-timeline <trace_id>
 poetry run python -m src.main incident-report <trace_id>
+poetry run python -m src.main benchmark
+poetry run python -m src.main status
+poetry run python -m src.main status-export
 ```
 
 ## Edit a File (Patch Workflow)

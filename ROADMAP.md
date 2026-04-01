@@ -119,6 +119,9 @@ Build a local-first coding assistant that can:
 - `python -m src.main cost-estimate 1000 500` returns deterministic USD estimate based on configurable token rates.
 - `python -m src.main incident-timeline <trace_id>` and `incident-report <trace_id>` generate timeline/report artifacts from audit traces.
 - `python -m pytest -q` now passes (`75 passed`).
+- `python -m src.main benchmark` returns a check-based readiness score.
+- `python -m src.main status` returns consolidated roadmap/benchmark/budget/compliance posture.
+- `python -m src.main status-export` writes `.autofix_reports/status/latest_status.md`.
 
 ---
 
