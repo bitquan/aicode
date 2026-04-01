@@ -95,8 +95,12 @@ poetry run python -m src.main budget show
 poetry run python -m src.main budget set max_gate_seconds 120
 poetry run python -m src.main budget check
 poetry run python -m src.main budget metrics 20
+poetry run python -m src.main cost-estimate 1000 500
+poetry run python -m src.main cost-summary
 poetry run python -m src.main policy-check edit --role developer --auto
 poetry run python -m src.main resume-autofix <trace_id>
+poetry run python -m src.main incident-timeline <trace_id>
+poetry run python -m src.main incident-report <trace_id>
 ```
 
 ## Edit a File (Patch Workflow)

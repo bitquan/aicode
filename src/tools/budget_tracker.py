@@ -6,6 +6,9 @@ DEFAULT_BUDGETS = {
     "max_autofix_seconds": 120.0,
     "max_gate_seconds": 90.0,
     "max_autofix_attempts": 4,
+    "usd_per_1k_input_tokens": 0.0002,
+    "usd_per_1k_output_tokens": 0.0006,
+    "max_daily_cost_usd": 1.0,
 }
 
 
@@ -39,7 +42,27 @@ def set_budget_value(workspace_root: str, key: str, value: float) -> dict:
     return config
 
 
-def record_metric(workspace_root: str, workflow: str, duration_seconds: float, success: bool, attempts: int | None = None):
+def estimate_tokens(text: str) -> int:
+    if not text:
+        return 0
+    return max(1, len(text) // 4)
+
+
+def estimate_cost_usd(workspace_root: str, input_tokens: int, output_tokens: int) -> float:
+    config = load_budget_config(workspace_root)
+    in_cost = (max(0, input_tokens) / 1000.0) * float(config["usd_per_1k_input_tokens"])
+    out_cost = (max(0, output_tokens) / 1000.0) * float(config["usd_per_1k_output_tokens"])
+    return round(in_cost + out_cost, 8)
+
+
+def record_metric(
+    workspace_root: str,
+    workflow: str,
+    duration_seconds: float,
+    success: bool,
+    attempts: int | None = None,
+    metadata: dict | None = None,
+):
     payload = {
         "workflow": workflow,
         "duration_seconds": round(float(duration_seconds), 4),
@@ -47,10 +70,30 @@ def record_metric(workspace_root: str, workflow: str, duration_seconds: float, s
     }
     if attempts is not None:
         payload["attempts"] = int(attempts)
+    if metadata:
+        payload.update(metadata)
     path = _metrics_path(workspace_root)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload) + "\n")
     return payload
+
+
+def record_model_usage(workspace_root: str, model: str, prompt: str, response: str, success: bool):
+    input_tokens = estimate_tokens(prompt)
+    output_tokens = estimate_tokens(response)
+    cost = estimate_cost_usd(workspace_root, input_tokens=input_tokens, output_tokens=output_tokens)
+    return record_metric(
+        workspace_root=workspace_root,
+        workflow="model_inference",
+        duration_seconds=0.0,
+        success=success,
+        metadata={
+            "model": model,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "estimated_cost_usd": cost,
+        },
+    )
 
 
 def read_metrics(workspace_root: str, limit: int = 50) -> list[dict]:
@@ -81,10 +124,28 @@ def evaluate_budgets(workspace_root: str) -> dict:
     if latest_gate:
         checks["gate_duration_ok"] = latest_gate.get("duration_seconds", 0) <= config["max_gate_seconds"]
 
+    total_cost = sum(float(row.get("estimated_cost_usd", 0.0)) for row in rows)
+    checks["daily_cost_ok"] = total_cost <= float(config["max_daily_cost_usd"])
+
     return {
         "config": config,
         "latest_autofix": latest_autofix,
         "latest_gate": latest_gate,
+        "estimated_total_cost_usd": round(total_cost, 8),
         "checks": checks,
         "passed": all(checks.values()),
+    }
+
+
+def summarize_costs(workspace_root: str) -> dict:
+    rows = read_metrics(workspace_root, limit=1000)
+    model_rows = [row for row in rows if row.get("workflow") == "model_inference"]
+    total_input = sum(int(row.get("input_tokens", 0)) for row in model_rows)
+    total_output = sum(int(row.get("output_tokens", 0)) for row in model_rows)
+    total_cost = sum(float(row.get("estimated_cost_usd", 0.0)) for row in model_rows)
+    return {
+        "inference_events": len(model_rows),
+        "total_input_tokens": total_input,
+        "total_output_tokens": total_output,
+        "estimated_total_cost_usd": round(total_cost, 8),
     }

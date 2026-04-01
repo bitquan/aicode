@@ -8,7 +8,14 @@ from src.tools.approval_policy import check_action_approval
 from src.tools.audit_export import export_audit_markdown
 from src.tools.autofix_state import load_autofix_state
 from src.tools.autofix import run_autofix_loop
-from src.tools.budget_tracker import evaluate_budgets, load_budget_config, read_metrics, set_budget_value
+from src.tools.budget_tracker import (
+    estimate_cost_usd,
+    evaluate_budgets,
+    load_budget_config,
+    read_metrics,
+    set_budget_value,
+    summarize_costs,
+)
 from src.tools.compliance_summary import build_compliance_summary
 from src.tools.dependency_inventory import read_dependency_inventory
 from src.tools.docs_assistant import build_doc_update
@@ -20,6 +27,7 @@ from src.tools.read_policy import ReadFirstPolicy, check_read_first
 from src.tools.release_notes import generate_release_notes
 from src.tools.retention import cleanup_reports
 from src.tools.license_scanner import scan_dependency_licenses
+from src.tools.incident_automation import build_incident_timeline, generate_incident_report
 from src.tools.playbook_manager import get_playbook_status, scaffold_playbooks
 from src.tools.repo_index import build_file_index
 from src.tools.semantic_retriever import retrieve_relevant_snippets
@@ -74,6 +82,10 @@ def _print_usage():
     print("  python -m src.main playbooks scaffold|status")
     print("  python -m src.main compliance")
     print("  python -m src.main budget show|set|check|metrics ...")
+    print("  python -m src.main cost-estimate <input_tokens> <output_tokens>")
+    print("  python -m src.main cost-summary")
+    print("  python -m src.main incident-timeline <trace_id>")
+    print("  python -m src.main incident-report <trace_id>")
     print("  python -m src.main resume-autofix <trace_id>")
     print("  python -m src.main eval")
 
@@ -363,6 +375,43 @@ def main():
             print(read_metrics(str(Path.cwd()), limit=limit))
             return
         print("Usage: python -m src.main budget show|set|check|metrics ...")
+        return
+
+    if args and args[0] == "cost-estimate":
+        if len(args) != 3:
+            print("Usage: python -m src.main cost-estimate <input_tokens> <output_tokens>")
+            return
+        input_tokens = int(args[1])
+        output_tokens = int(args[2])
+        print(
+            {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "estimated_cost_usd": estimate_cost_usd(
+                    str(Path.cwd()),
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                ),
+            }
+        )
+        return
+
+    if args and args[0] == "cost-summary":
+        print(summarize_costs(str(Path.cwd())))
+        return
+
+    if args and args[0] == "incident-timeline":
+        if len(args) != 2:
+            print("Usage: python -m src.main incident-timeline <trace_id>")
+            return
+        print(build_incident_timeline(str(Path.cwd()), args[1]))
+        return
+
+    if args and args[0] == "incident-report":
+        if len(args) != 2:
+            print("Usage: python -m src.main incident-report <trace_id>")
+            return
+        print(generate_incident_report(str(Path.cwd()), args[1]))
         return
 
     if args and args[0] == "resume-autofix":

@@ -6,6 +6,7 @@ from src.config.capabilities import load_capabilities
 from src.config.settings import load_settings
 from src.providers.ollama_provider import OllamaProvider
 from src.prompts.layers import build_layered_prompt, load_prompt_layers
+from src.tools.budget_tracker import record_model_usage
 from src.tools.code_runner import run_code
 from src.types.actions import AgentAction
 
@@ -30,7 +31,25 @@ class CodingAgent:
         self.system_prompt = self.prompt_layers.get("system", "")
 
     def _call_ollama(self, prompt):
-        return self.provider.generate(prompt=prompt, system_prompt=self.system_prompt)
+        try:
+            response = self.provider.generate(prompt=prompt, system_prompt=self.system_prompt)
+            record_model_usage(
+                workspace_root=str(Path.cwd()),
+                model=self.model,
+                prompt=prompt,
+                response=response,
+                success=True,
+            )
+            return response
+        except Exception:
+            record_model_usage(
+                workspace_root=str(Path.cwd()),
+                model=self.model,
+                prompt=prompt,
+                response="",
+                success=False,
+            )
+            raise
 
     def _build_prompt(self, user_prompt, context=""):
         return build_layered_prompt(user_prompt=user_prompt, layers=self.prompt_layers, context=context)

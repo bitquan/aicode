@@ -116,6 +116,9 @@ Build a local-first coding assistant that can:
 - `python -m src.main budget show|check` returned configured thresholds and pass/fail checks.
 - `python -m src.main license-scan` and `python -m src.main compliance` both passed on current dependencies.
 - `python -m pytest -q` now passes (`72 passed`).
+- `python -m src.main cost-estimate 1000 500` returns deterministic USD estimate based on configurable token rates.
+- `python -m src.main incident-timeline <trace_id>` and `incident-report <trace_id>` generate timeline/report artifacts from audit traces.
+- `python -m pytest -q` now passes (`75 passed`).
 
 ---
 
