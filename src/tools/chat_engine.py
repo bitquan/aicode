@@ -31,6 +31,9 @@ from src.tools.git_integration import GitIntegration
 from src.tools.pr_generator import PRGenerator
 from src.tools.vscode_integration import VSCodeIntegration
 from src.tools.dashboard import DashboardBuilder
+from src.tools.agent_memory import AgentMemoryStore
+from src.tools.agent_router import AgentRouter
+from src.tools.multi_agent import MultiAgentCoordinator
 
 
 class MarkdownRenderer:
@@ -125,6 +128,9 @@ class ChatEngine:
         self.pr_generator = PRGenerator(str(self.workspace_root))
         self.vscode_integration = VSCodeIntegration(str(self.workspace_root))
         self.dashboard_builder = DashboardBuilder(str(self.workspace_root))
+        self.agent_memory = AgentMemoryStore(str(self.workspace_root))
+        self.agent_router = AgentRouter()
+        self.multi_agent = MultiAgentCoordinator(str(self.workspace_root))
         self.interaction_log = []  # Track interactions for learning
         self._load_context()
     
@@ -505,6 +511,31 @@ class ChatEngine:
                 "action": "dashboard",
                 "confidence": 0.85,
             }
+
+        if lower.startswith(("collaborate ", "multi-agent ", "team up ")):
+            task = lower.split(" ", 1)[1] if " " in lower else "general task"
+            return {
+                "action": "multi_agent",
+                "task": task,
+                "confidence": 0.9,
+            }
+
+        if lower.startswith(("route task ", "route ", "who should handle ")):
+            task = lower.split(" ", 1)[1] if " " in lower else "general task"
+            return {
+                "action": "agent_route",
+                "task": task,
+                "confidence": 0.85,
+            }
+
+        if lower.startswith("agent memory"):
+            topic = lower.replace("agent memory", "", 1).strip()
+            return {
+                "action": "agent_memory",
+                "mode": "recall",
+                "topic": topic,
+                "confidence": 0.85,
+            }
         
         # Fallback: treat as code generation
         return {
@@ -558,8 +589,14 @@ class ChatEngine:
                 return self._handle_vscode(request)
             elif action == "dashboard":
                 return self._handle_dashboard(request)
+            elif action == "multi_agent":
+                return self._handle_multi_agent(request)
+            elif action == "agent_route":
+                return self._handle_agent_route(request)
+            elif action == "agent_memory":
+                return self._handle_agent_memory(request)
             else:
-                return "❓ I didn't understand that. Try: 'write <code>', 'fix <file>', 'review <file>', 'debug <file>', 'profile <file>', 'coverage <file>', 'export knowledge', 'import knowledge <file>', 'prompt lab', 'build tool <name>', 'architecture', 'git status', 'generate pr', 'vscode setup', 'dashboard', 'search <query>', 'browse <path>', 'learn', or 'status'"
+                return "❓ I didn't understand that. Try: 'write <code>', 'fix <file>', 'review <file>', 'debug <file>', 'profile <file>', 'coverage <file>', 'export knowledge', 'import knowledge <file>', 'prompt lab', 'build tool <name>', 'architecture', 'git status', 'generate pr', 'vscode setup', 'dashboard', 'collaborate <task>', 'route task <task>', 'agent memory <topic>', 'search <query>', 'browse <path>', 'learn', or 'status'"
         except Exception as e:
             return f"⚠️ Error: {str(e)[:100]}"
     
@@ -982,6 +1019,52 @@ Top Issues by File:
             f"  • Benchmark: {payload.get('benchmark_score')}\n"
             f"  • Roadmap: {payload.get('roadmap_percent')}% ({payload.get('roadmap_done')}/{payload.get('roadmap_total')})"
         )
+
+    def _handle_multi_agent(self, request: dict) -> str:
+        """Build a collaboration plan across specialized agents."""
+        task = request.get("task", "general task")
+        result = self.multi_agent.collaborate(task)
+        self._log_interaction(f"collaborate {task}", "multi_agent", True)
+        return (
+            "🤝 Multi-Agent Plan\n"
+            f"  • Task: {result.get('task')}\n"
+            f"  • Primary: {result.get('primary')}\n"
+            f"  • Collaborators: {', '.join(result.get('collaborators', [])) or 'None'}\n"
+            f"  • Memory Hits: {result.get('memory_hits')}\n"
+            + "\n".join(f"  • {step}" for step in result.get('plan', [])[:5])
+        )
+
+    def _handle_agent_route(self, request: dict) -> str:
+        """Route a task to the best specialized agent team."""
+        task = request.get("task", "general task")
+        route = self.agent_router.route(task)
+        self._log_interaction(f"route task {task}", "agent_route", True)
+        return (
+            "🧭 Agent Routing\n"
+            f"  • Primary Agent: {route.get('primary')}\n"
+            f"  • Collaborators: {', '.join(route.get('collaborators', [])) or 'None'}\n"
+            f"  • Why: {', '.join(route.get('rationale', []))}"
+        )
+
+    def _handle_agent_memory(self, request: dict) -> str:
+        """Share or recall multi-agent memory."""
+        mode = request.get("mode", "recall")
+        topic = request.get("topic", "")
+        if mode == "share":
+            note = request.get("note", "")
+            result = self.agent_memory.share("chat", topic or "general", note)
+            self._log_interaction(f"agent memory share {topic}", "agent_memory", True)
+            return f"✅ Shared Agent Memory: {result.get('entries')} total entries"
+
+        recalled = self.agent_memory.recall(topic=topic or None)
+        self._log_interaction(f"agent memory {topic}", "agent_memory", True)
+        lines = [
+            "🧠 Shared Agent Memory",
+            f"  • Matches: {recalled.get('count', 0)}",
+        ]
+        for entry in recalled.get('entries', [])[:5]:
+            lines.append(f"  • {entry.get('agent')}: {entry.get('topic')} -> {entry.get('note')}")
+        return "\n".join(lines)
 
 def run_chat_session(workspace_root: str = "."):
     """Run interactive chat session."""
