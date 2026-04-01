@@ -11,6 +11,8 @@ This extension is intentionally thin: it forwards prompts to your local aicode a
 The chat panel includes:
 - in-panel command history chips
 - one-click `Retry` on each response card
+- `Check API` button for quick backend reachability verification
+- error messages include the exact request URL
 
 ## Setup
 

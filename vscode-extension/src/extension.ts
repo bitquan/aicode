@@ -12,8 +12,12 @@ function baseUrl(): string {
   return String(config.get('baseUrl', 'http://127.0.0.1:8005')).replace(/\/$/, '');
 }
 
+function commandUrl(): string {
+  return `${baseUrl()}/v1/aicode/command`;
+}
+
 async function callAppCommand(command: string): Promise<AppCommandResponse> {
-  const url = `${baseUrl()}/v1/aicode/command`;
+  const url = commandUrl();
   const resp = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -24,6 +28,19 @@ async function callAppCommand(command: string): Promise<AppCommandResponse> {
     throw new Error(`HTTP ${resp.status}: ${detail}`);
   }
   return (await resp.json()) as AppCommandResponse;
+}
+
+async function checkApiHealth(): Promise<void> {
+  const url = commandUrl();
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command: 'status' }),
+  });
+  if (!resp.ok) {
+    const detail = await resp.text();
+    throw new Error(`Health check failed at ${url} (HTTP ${resp.status}): ${detail}`);
+  }
 }
 
 function panelHtml(): string {
@@ -55,6 +72,7 @@ function panelHtml(): string {
   <div class="row">
     <input id="prompt" placeholder="e.g. security scan src/ or status" />
     <button id="send">Send</button>
+    <button id="health">Check API</button>
   </div>
   <div id="recent"></div>
 
@@ -64,6 +82,7 @@ function panelHtml(): string {
     const recent = document.getElementById('recent');
     const input = document.getElementById('prompt');
     const send = document.getElementById('send');
+    const health = document.getElementById('health');
     const state = vscode.getState() || { commands: [] };
     let commandHistory = Array.isArray(state.commands) ? state.commands : [];
 
@@ -127,6 +146,9 @@ function panelHtml(): string {
     }
 
     send.addEventListener('click', submit);
+    health.addEventListener('click', () => {
+      vscode.postMessage({ type: 'health' });
+    });
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') submit();
     });
@@ -138,6 +160,9 @@ function panelHtml(): string {
       }
       if (msg.type === 'error') {
         appendEntry(msg.command || 'unknown', 'ERROR: ' + msg.message);
+      }
+      if (msg.type === 'health') {
+        appendEntry('health', msg.message);
       }
     });
 
@@ -171,17 +196,17 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage(`aicode: ${result.action}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      vscode.window.showErrorMessage(`aicode request failed: ${message}`);
+      vscode.window.showErrorMessage(`aicode request failed (${commandUrl()}): ${message}`);
     }
   });
 
   const statusDisposable = vscode.commands.registerCommand('aicode.status', async () => {
     try {
-      await callAppCommand('status');
-      vscode.window.showInformationMessage('aicode API is reachable.');
+      await checkApiHealth();
+      vscode.window.showInformationMessage(`aicode API is reachable (${commandUrl()}).`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      vscode.window.showWarningMessage(`aicode API not reachable: ${message}`);
+      vscode.window.showWarningMessage(`aicode API not reachable (${commandUrl()}): ${message}`);
     }
   });
 
@@ -196,6 +221,17 @@ export function activate(context: vscode.ExtensionContext) {
     panel.webview.html = panelHtml();
 
     panel.webview.onDidReceiveMessage(async (message) => {
+      if (message?.type === 'health') {
+        try {
+          await checkApiHealth();
+          panel.webview.postMessage({ type: 'health', message: `API OK: ${commandUrl()}` });
+        } catch (error) {
+          const text = error instanceof Error ? error.message : String(error);
+          panel.webview.postMessage({ type: 'health', message: `API ERROR: ${text}` });
+        }
+        return;
+      }
+
       if (message?.type !== 'ask') {
         return;
       }
