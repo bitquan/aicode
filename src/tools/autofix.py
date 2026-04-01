@@ -9,10 +9,13 @@ from src.tools.logger import get_audit_log_path, log_event, new_trace_id
 from src.tools.minimal_repro import write_minimal_repro
 from src.tools.multifile_editor import apply_multifile_rewrites
 from src.tools.patch_applier import apply_file_edit, preview_diff
+from src.tools.project_memory import remember_note
+from src.tools.prompt_optimizer import choose_prompt_strategy, record_prompt_outcome
 from src.tools.repair_planner import plan_repair_files
 from src.tools.repair_strategy import choose_repair_strategy
 from src.tools.test_selector import select_test_command
 from src.tools.test_runner import run_test_command
+from src.tools.tool_policy import recommend_command, record_tool_outcome
 
 
 def _resolve_target(workspace_root: str, relative_path: str):
@@ -37,6 +40,12 @@ def run_autofix_loop(
     trace_id = new_trace_id()
     target = _resolve_target(workspace_root, target_path)
     selected_test_command = test_command or select_test_command(workspace_root, target_path)
+    selected_test_command = recommend_command(workspace_root, "autofix", selected_test_command)
+    prompt_strategy = choose_prompt_strategy(
+        workspace_root,
+        options=["concise", "verbose"],
+        default="concise",
+    )
     audit_log_path = get_audit_log_path(workspace_root, trace_id)
     log_event(
         "autofix_start",
@@ -64,7 +73,17 @@ def run_autofix_loop(
         }
 
     original_content = target.read_text(encoding="utf-8")
-    loop_instruction = instruction
+    preflight_fixes = retrieve_similar_fixes(workspace_root, target_path, "unknown", limit=3)
+    preflight_hints = "\n".join(
+        [
+            f"- previous strategy={item.get('strategy')} summary={item.get('summary')} success={item.get('success')}"
+            for item in preflight_fixes
+        ]
+    )
+    loop_instruction = (
+        f"{instruction}\n\n"
+        f"Preflight similar-fix hints:\n{preflight_hints or 'none'}"
+    )
     attempts = []
     stop_reason = ""
     planned_files = [target_path]
@@ -161,6 +180,13 @@ def run_autofix_loop(
         )
 
         if test_result["success"]:
+            record_tool_outcome(workspace_root, "autofix", selected_test_command, True)
+            record_prompt_outcome(workspace_root, prompt_strategy, True)
+            remember_note(
+                workspace_root,
+                key="autofix_success",
+                value=f"target={target_path} strategy={prompt_strategy} trace={trace_id}",
+            )
             store_fix_memory(
                 workspace_root,
                 {
@@ -203,6 +229,7 @@ def run_autofix_loop(
         loop_instruction = (
             f"{instruction}\n\n"
             f"Repair attempt {attempt_index} failed.\n"
+            f"Prompt strategy: {prompt_strategy}\n"
             f"Test command: {selected_test_command}\n"
             f"Failure category: {failure['category']}\n"
             f"Failure summary: {failure['summary']}\n"
@@ -220,6 +247,13 @@ def run_autofix_loop(
         )
 
     apply_file_edit(workspace_root, target_path, original_content)
+    record_tool_outcome(workspace_root, "autofix", selected_test_command, False)
+    record_prompt_outcome(workspace_root, prompt_strategy, False)
+    remember_note(
+        workspace_root,
+        key="autofix_failure",
+        value=f"target={target_path} strategy={prompt_strategy} trace={trace_id}",
+    )
     last_failure = _get_last_failure(attempts)
     repro_path = write_minimal_repro(
         workspace_root=workspace_root,

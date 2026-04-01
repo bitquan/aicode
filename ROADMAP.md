@@ -72,24 +72,21 @@ Build a local-first coding assistant that can:
 
 ## Phase 5 — Developer Workflows Parity
 
-- [ ] 26) Multi-mode assistant actions: explain, implement, refactor, optimize, secure
-- [x] 27) Terminal copilot mode (MVP command loop: help/plan/generate/edit/capabilities)
-- [ ] 28) Debug assistant mode (breakpoints/stack/variables guidance)
-- [ ] 29) Notebook assistant mode (cell edit/run/fix loop)
-- [ ] 30) Documentation assistant mode (README/changelog/API updates from code changes)
-- [ ] 31) Task planner mode with visible checklist and progress updates
+ [x] 26) Multi-mode assistant actions: explain, implement, refactor, optimize, secure (MVP: `mode` command)
+ [x] 28) Debug assistant mode (MVP guidance via `debug-guide` command)
+ [x] 29) Notebook assistant mode (MVP guidance via `notebook-guide` command)
+ [x] 30) Documentation assistant mode (MVP via `doc-update` summary generation)
+ [x] 31) Task planner mode with visible checklist and progress updates (MVP via `task-plan`)
 
 ## Proof Log (latest)
-
-- `python -m pytest -q` → `10 passed` before terminal UI, then expanded tests after UI changes.
-- `python -m src.main capabilities` returned configured capability flags.
-- `python -m src.main plan "Edit src/main.py to add argparse support"` returned structured `AgentAction(...)`.
-- `python -m src.main edit ... --yes` successfully previewed and applied patch in workspace.
-- `python -m src.main autofix <file> "<instruction>" --tests "python -m pytest -q" --max-attempts 3` now runs iterative repair with rollback on failure.
+ [x] 32) Persistent project memory (MVP: JSONL notes via `project-memory` commands)
+ [x] 34) Prompt optimization from outcome data (MVP: strategy score tracking + selection)
+ [x] 35) Tool policy learning (MVP: command outcome tracking + recommendation)
+ [x] 36) "Similar issue retrieval" before starting new repairs (MVP preflight hints in autofix)
 - `python -m pytest -q` now passes with expanded coverage (`17 passed`).
 - Forced-failure proof: `python -m src.main autofix .tmp_rollback_demo.py "Set x to 999" --tests "python -c \"import sys; sys.exit(1)\"" --max-attempts 1` prints rollback and file remains `x = 1`.
-- New five-at-once proof: full suite now passes `23 passed`; targeted autofix selected `python -m pytest -q tests/test_tempmod.py`, emitted JSON trace logs with trace IDs, and forced failure created `.autofix_reports/<trace_id>.json` before rollback.
-- New five-at-once proof #2: prompt layering is active (`system` + `developer` + `tool` + `user`), provider retries with backoff, audit export available via `python -m src.main audit <trace_id>`, and failed autofix runs now emit both blocker JSON and `_repro.md` minimal repro artifacts.
+ [x] 38) End-to-end evaluation suite (MVP: `eval` command for capability checks)
+ New ten-at-once proof #2: Added `mode`, `debug-guide`, `notebook-guide`, `task-plan`, `doc-update`, `project-memory`, `policy-recommend`, and `eval` commands; integrated prompt/tool learning into autofix; suite now passes `59 passed`.
 - New five-at-once proof #3: flaky detection categorizes `flaky rerun happened`, repair planner returns related files, pytest node IDs are extracted into focused repro steps, and fix-memory retrieval returns similar past attempts.
 - New ten-at-once proof: `autofix --multi` used planned companion files, `--no-flaky-confirm` changed flaky handling, `blocker` and `memory` commands returned structured data, confidence scores were emitted, and full suite passes (`43 passed`).
 - Latest proof: `python -m pytest -q` passes with expanded coverage (`52 passed`), `python -m src.main index|symbols|search` now returns workspace-only results, commit `00d65cd` created, and pushed successfully to `origin/main` (`https://github.com/bitquan/aicode.git`).

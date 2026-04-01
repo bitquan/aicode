@@ -4,6 +4,8 @@ from pathlib import Path
 
 from src.agents.coding_agent import CodingAgent
 from src.tools.autofix import run_autofix_loop
+from src.tools.docs_assistant import build_doc_update
+from src.tools.eval_runner import run_evaluation_suite
 from src.tools.context_packer import pack_context
 from src.tools.patch_guard import validate_unified_diff
 from src.tools.read_policy import ReadFirstPolicy, check_read_first
@@ -11,6 +13,9 @@ from src.tools.repo_index import build_file_index
 from src.tools.semantic_retriever import retrieve_relevant_snippets
 from src.tools.symbol_index import build_symbol_index
 from src.tools.fix_memory import retrieve_similar_fixes
+from src.tools.project_memory import get_notes, remember_note, search_notes
+from src.tools.task_planner import build_task_plan
+from src.tools.tool_policy import recommend_command
 from src.tools.logger import load_audit_events
 from src.tools.patch_applier import preview_diff, apply_file_edit
 from src.ui.terminal_ui import run_terminal_ui
@@ -36,6 +41,16 @@ def _print_usage():
     print("  python -m src.main context <query> [--chars N]")
     print("  python -m src.main read <relative_path>")
     print("  python -m src.main validate-diff <relative_path>")
+    print("  python -m src.main mode <explain|implement|refactor|optimize|secure> <request>")
+    print("  python -m src.main debug-guide <issue>")
+    print("  python -m src.main notebook-guide <task>")
+    print("  python -m src.main task-plan <request>")
+    print("  python -m src.main doc-update [changed_files...]")
+    print("  python -m src.main project-memory add <key> <value>")
+    print("  python -m src.main project-memory get [key]")
+    print("  python -m src.main project-memory search <query>")
+    print("  python -m src.main policy-recommend <task_type> <default_command>")
+    print("  python -m src.main eval")
 
 def main():
     agent = CodingAgent()
@@ -143,6 +158,93 @@ def main():
         content = path.read_text(encoding="utf-8")
         diff = preview_diff(content, content, relative_path)
         print(validate_unified_diff(diff))
+        return
+
+    if args and args[0] == "mode":
+        if len(args) < 3:
+            print("Usage: python -m src.main mode <explain|implement|refactor|optimize|secure> <request>")
+            return
+        mode = args[1]
+        request = " ".join(args[2:]).strip()
+        print(agent.run_mode(mode, request))
+        return
+
+    if args and args[0] == "debug-guide":
+        if len(args) < 2:
+            print("Usage: python -m src.main debug-guide <issue>")
+            return
+        issue = " ".join(args[1:]).strip()
+        print(
+            agent.run_mode(
+                "debug",
+                f"Provide breakpoint strategy, stack inspection steps, and likely root causes for: {issue}",
+            )
+        )
+        return
+
+    if args and args[0] == "notebook-guide":
+        if len(args) < 2:
+            print("Usage: python -m src.main notebook-guide <task>")
+            return
+        task = " ".join(args[1:]).strip()
+        print(
+            agent.run_mode(
+                "notebook",
+                f"Provide cell-by-cell plan with run/fix loop for: {task}",
+            )
+        )
+        return
+
+    if args and args[0] == "task-plan":
+        request = " ".join(args[1:]).strip()
+        if not request:
+            print("Usage: python -m src.main task-plan <request>")
+            return
+        print(build_task_plan(request))
+        return
+
+    if args and args[0] == "doc-update":
+        changed_files = args[1:] if len(args) > 1 else None
+        print(build_doc_update(str(Path.cwd()), changed_files=changed_files))
+        return
+
+    if args and args[0] == "project-memory":
+        if len(args) < 2:
+            print("Usage: python -m src.main project-memory <add|get|search> ...")
+            return
+        sub = args[1]
+        if sub == "add":
+            if len(args) < 4:
+                print("Usage: python -m src.main project-memory add <key> <value>")
+                return
+            key = args[2]
+            value = " ".join(args[3:]).strip()
+            print(remember_note(str(Path.cwd()), key=key, value=value))
+            return
+        if sub == "get":
+            key = args[2] if len(args) > 2 else None
+            print(get_notes(str(Path.cwd()), key=key, limit=20))
+            return
+        if sub == "search":
+            if len(args) < 3:
+                print("Usage: python -m src.main project-memory search <query>")
+                return
+            print(search_notes(str(Path.cwd()), query=" ".join(args[2:]), limit=10))
+            return
+        print("Usage: python -m src.main project-memory <add|get|search> ...")
+        return
+
+    if args and args[0] == "policy-recommend":
+        if len(args) < 3:
+            print("Usage: python -m src.main policy-recommend <task_type> <default_command>")
+            return
+        task_type = args[1]
+        default_command = " ".join(args[2:]).strip()
+        print(recommend_command(str(Path.cwd()), task_type, default_command))
+        return
+
+    if args and args[0] == "eval":
+        print(run_evaluation_suite())
         return
 
     if args and args[0] == "autofix":

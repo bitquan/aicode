@@ -63,6 +63,21 @@ poetry run python -m src.main read src/main.py
 poetry run python -m src.main validate-diff src/main.py
 ```
 
+Workflow parity and learning helpers:
+
+```bash
+poetry run python -m src.main mode explain "why this test fails"
+poetry run python -m src.main debug-guide "intermittent timeout in pytest"
+poetry run python -m src.main notebook-guide "clean notebook state and rerun cells"
+poetry run python -m src.main task-plan "add config validation"
+poetry run python -m src.main doc-update src/main.py src/tools/autofix.py
+poetry run python -m src.main project-memory add convention "prefer pytest -q"
+poetry run python -m src.main project-memory get convention
+poetry run python -m src.main project-memory search pytest
+poetry run python -m src.main policy-recommend autofix "python -m pytest -q"
+poetry run python -m src.main eval
+```
+
 ## Edit a File (Patch Workflow)
 Use the model to rewrite a specific file from an instruction:
 

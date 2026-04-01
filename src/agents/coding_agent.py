@@ -77,6 +77,16 @@ class CodingAgent:
         raw = self._call_ollama(layered)
         return AgentAction.from_model_output(raw)
 
+    def run_mode(self, mode: str, request: str, context: str = ""):
+        mode_prompt = (
+            f"You are operating in {mode} mode. "
+            "Answer concisely and focus only on the requested mode behavior.\n\n"
+            f"Request: {request}"
+        )
+        layered = self._build_prompt(mode_prompt, context=context)
+        raw = self._call_ollama(layered)
+        return self._extract_text_block(raw)
+
     def evaluate_code(self, code):
         report = {
             "syntax_ok": False,
