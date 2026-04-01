@@ -50,6 +50,7 @@ from src.tools.architecture_diagram_understanding import ArchitectureDiagramUnde
 from src.tools.data_schema_analyzer import DataSchemaAnalyzer
 from src.tools.diff_visualization import DiffVisualization
 from src.tools.prompt_taxonomy import classify_prompt_type
+from src.tools.learned_preferences import add_preference, apply_correction, get_preferences, retrieve_preferences
 
 
 class MarkdownRenderer:
@@ -460,6 +461,31 @@ class ChatEngine:
                 "lesson": lesson,
                 "confidence": 0.95,
             }
+
+        # Pattern: explicit correction/override input
+        if lower.startswith(("correct:", "correction:", "replace preference:", "disable preference", "strengthen preference")):
+            correction_type = "replace"
+            correction_text = user_input
+
+            if lower.startswith(("correct:", "correction:", "replace preference:")):
+                correction_type = "replace"
+                for prefix in ("correct:", "correction:", "replace preference:"):
+                    if lower.startswith(prefix):
+                        correction_text = user_input[len(prefix):].strip()
+                        break
+            elif lower.startswith("disable preference"):
+                correction_type = "disable"
+                correction_text = user_input.replace("disable preference", "", 1).strip()
+            elif lower.startswith("strengthen preference"):
+                correction_type = "strengthen"
+                correction_text = user_input.replace("strengthen preference", "", 1).strip()
+
+            return {
+                "action": "user_correct",
+                "correction_type": correction_type,
+                "correction_text": correction_text,
+                "confidence": 0.95,
+            }
         
         # Pattern: "status/how are we doing"
         if any(w in lower for w in ["status", "score", "how are we", "progress", "health"]):
@@ -759,6 +785,8 @@ class ChatEngine:
                 return self._handle_remember(request)
             elif action == "user_learn":
                 return self._handle_user_learn(request)
+            elif action == "user_correct":
+                return self._handle_user_correct(request)
             elif action == "browse":
                 return self._handle_browse(request)
             elif action == "learn":
@@ -837,7 +865,7 @@ class ChatEngine:
     def _handle_generate(self, request: dict) -> str:
         """Generate code from prompt with streaming output and doc context."""
         instruction = request.get("instruction", "")
-        instruction = self._apply_user_preferences(instruction)
+        instruction = self._apply_user_preferences(instruction, request_intent="generate")
         use_streaming = request.get("stream", True)
         
         # Enhance with documentation context
@@ -888,7 +916,7 @@ Execution output:
         """Run autofix loop on target file with streaming feedback and doc context."""
         target = request.get("target", "src/main.py")
         instruction = request.get("instruction", "")
-        instruction = self._apply_user_preferences(instruction)
+        instruction = self._apply_user_preferences(instruction, request_intent="autofix")
         use_streaming = request.get("stream", True)
         
         target_path = self.workspace_root / target
@@ -983,6 +1011,15 @@ Execution output:
             return "⚠️ I can learn from your input, but I need a lesson. Try: `learn: always run targeted tests first`."
 
         remember_note(str(self.workspace_root), key="lesson", value=lesson)
+        category = self._infer_preference_category(lesson)
+        preference = add_preference(
+            workspace_root=str(self.workspace_root),
+            statement=lesson,
+            category=category,
+            user_scope="project",
+            origin_prompt=f"learn: {lesson}",
+            confidence=0.85,
+        )
         self.team_knowledge_base.add_entry(
             topic="user_input",
             note=lesson,
@@ -994,12 +1031,63 @@ Execution output:
         return (
             "🧠 Learned from your input\n"
             f"  • Saved lesson: {lesson}\n"
+            f"  • Preference ID: {preference['preference_id']} ({category})\n"
             "  • Stored in project memory + team knowledge base\n"
             "  • Use `team kb user_input` to recall saved lessons"
         )
 
-    def _apply_user_preferences(self, instruction: str) -> str:
+    def _handle_user_correct(self, request: dict) -> str:
+        """Apply correction updates to learned preferences."""
+        correction_type = str(request.get("correction_type", "replace"))
+        correction_text = str(request.get("correction_text", "")).strip()
+        target_preference_id = request.get("target_preference_id")
+
+        if correction_type == "replace" and not correction_text:
+            return "⚠️ Provide correction text. Example: `correct: prefer concise responses and always include tests run`."
+
+        result = apply_correction(
+            workspace_root=str(self.workspace_root),
+            correction_type=correction_type,
+            correction_text=correction_text,
+            target_preference_id=target_preference_id,
+        )
+        self._log_interaction(f"correction: {correction_type}", "user_correct", bool(result.get("updated")))
+
+        if not result.get("updated"):
+            return "⚠️ No active preference found to update. Add a lesson first with `learn:`."
+
+        created = result.get("created_preference")
+        created_text = ""
+        if created:
+            created_text = f"\n  • New preference: {created.get('preference_id')}"
+
+        return (
+            "🔁 Preference correction applied\n"
+            f"  • Type: {correction_type}\n"
+            f"  • Target: {result.get('target_preference_id') or 'latest active'}"
+            f"{created_text}"
+        )
+
+    def _apply_user_preferences(self, instruction: str, request_intent: str) -> str:
         """Append learned user preferences to execution prompts when available."""
+        has_structured_preferences = len(get_preferences(str(self.workspace_root), active_only=False)) > 0
+        retrieved = retrieve_preferences(
+            workspace_root=str(self.workspace_root),
+            request_intent=request_intent,
+            top_k=3,
+        )
+        if retrieved:
+            lines = [
+                f"- {item['statement']} ({item['retrieval_reason']})"
+                for item in retrieved
+            ]
+            preference_block = "\n\nUser Preferences:\n" + "\n".join(lines)
+            return f"{instruction}{preference_block}" if instruction else preference_block.strip()
+
+        if has_structured_preferences:
+            return instruction
+
+        # Backward-compatible fallback to previously stored freeform notes.
         notes = get_notes(str(self.workspace_root), key="lesson", limit=10)
         lessons: list[str] = []
         seen: set[str] = set()
@@ -1029,6 +1117,21 @@ Execution output:
 
         preference_block = "\n\nUser Preferences:\n" + "\n".join(f"- {item}" for item in lessons[:3])
         return f"{instruction}{preference_block}" if instruction else preference_block.strip()
+
+    def _infer_preference_category(self, lesson: str) -> str:
+        """Infer a baseline preference category from freeform lesson text."""
+        lower = lesson.lower()
+        if any(token in lower for token in ("style", "format", "naming", "readable")):
+            return "style"
+        if any(token in lower for token in ("test", "coverage", "pytest")):
+            return "testing"
+        if any(token in lower for token in ("safe", "security", "sanitize", "validate")):
+            return "safety"
+        if any(token in lower for token in ("tool", "lint", "build", "ci")):
+            return "tooling"
+        if any(token in lower for token in ("output", "response", "formatting", "concise")):
+            return "output_format"
+        return "workflow"
     
     def _handle_learn(self, request: dict) -> str:
         """Trigger self-improvement cycle based on learned interactions."""

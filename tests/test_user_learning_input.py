@@ -28,6 +28,12 @@ def test_parse_teach_prefix_maps_user_learn(engine):
     assert req['action'] == 'user_learn'
 
 
+def test_parse_correction_prefix_maps_user_correct(engine):
+    req = engine.parse_request('correction: prefer concise responses')
+    assert req['action'] == 'user_correct'
+    assert req['correction_type'] == 'replace'
+
+
 def test_execute_user_learn_persists_and_responds(engine):
     result = engine.execute({'action': 'user_learn', 'lesson': 'always run targeted tests first'})
     assert isinstance(result, str)
