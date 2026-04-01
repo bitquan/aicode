@@ -1,6 +1,7 @@
 """
 Interactive chat interface with streaming, markdown, and file browsing.
 Understands natural language requests and routes to appropriate tools.
+Integrates online documentation and learns from interactions.
 """
 
 import json
@@ -15,6 +16,7 @@ from src.tools.repo_index import build_file_index
 from src.tools.semantic_retriever import retrieve_relevant_snippets
 from src.tools.status_report import build_status_report
 from src.tools.project_memory import remember_note, search_notes
+from src.tools.doc_fetcher import DocFetcher, enhance_with_docs
 
 
 class MarkdownRenderer:
@@ -95,6 +97,8 @@ class ChatEngine:
         self.workspace_root = Path(workspace_root).resolve()
         self.agent = CodingAgent()
         self.context = {}
+        self.doc_fetcher = DocFetcher(str(self.workspace_root))
+        self.interaction_log = []  # Track interactions for learning
         self._load_context()
     
     def _load_context(self):
@@ -103,9 +107,26 @@ class ChatEngine:
             self.context["index"] = build_file_index(str(self.workspace_root))
             report = build_status_report(str(self.workspace_root))
             self.context["status"] = report
+            
+            # Index documentation for packages in the project
+            packages = self.doc_fetcher.extract_requirements(str(self.workspace_root / "pyproject.toml"))
+            if not packages:
+                packages = self.doc_fetcher.extract_requirements(str(self.workspace_root / "requirements.txt"))
+            if packages:
+                self.doc_fetcher.index_library(packages)
+                self.context["packages"] = packages
         except Exception:
             pass
     
+    def _log_interaction(self, query: str, action: str, success: bool, doc_context: Optional[str] = None):
+        """Log interaction for learning and improvement."""
+        self.interaction_log.append({
+            "query": query,
+            "action": action,
+            "success": success,
+            "doc_context": doc_context,
+            "timestamp": str(Path.home() / ".dev_timestamp")
+        })
     def parse_request(self, user_input: str) -> dict:
         """Parse natural language request and determine action."""
         lower = user_input.lower().strip()
@@ -211,11 +232,17 @@ class ChatEngine:
             return f"⚠️ Error: {str(e)[:100]}"
     
     def _handle_generate(self, request: dict) -> str:
-        """Generate code from prompt with streaming output."""
+        """Generate code from prompt with streaming output and doc context."""
         instruction = request.get("instruction", "")
         use_streaming = request.get("stream", True)
         
+        # Enhance with documentation context
+        doc_context = enhance_with_docs(str(self.workspace_root), instruction)
+        
         if use_streaming:
+            if doc_context:
+                print(doc_context, flush=True)
+                print()
             print("🔄 Generating... ", end="", flush=True)
         
         code = self.agent.generate_code(instruction)
@@ -235,6 +262,9 @@ class ChatEngine:
         status = "✅ Success" if eval_result["execution_ok"] else "⚠️ Has issues"
         output = eval_result.get("stdout", "")
         
+        # Log interaction for learning
+        self._log_interaction(instruction, "generate", eval_result["execution_ok"], doc_context)
+        
         return f"""{status}
 Execution output:
 {output}"""
@@ -251,7 +281,7 @@ Execution output:
         return f"📝 I'll {instruction.lower()} in {target}. Use 'autofix {target}' to apply changes and test."
     
     def _handle_autofix(self, request: dict) -> str:
-        """Run autofix loop on target file with streaming feedback."""
+        """Run autofix loop on target file with streaming feedback and doc context."""
         target = request.get("target", "src/main.py")
         instruction = request.get("instruction", "")
         use_streaming = request.get("stream", True)
@@ -260,7 +290,13 @@ Execution output:
         if not target_path.exists():
             return f"❌ File not found: {target}"
         
+        # Enhance with documentation context
+        doc_context = enhance_with_docs(str(self.workspace_root), instruction)
+        
         if use_streaming:
+            if doc_context:
+                print(doc_context, flush=True)
+                print()
             print(f"🔧 Running autofix on {target}... ", flush=True)
             print(f"   Instruction: {instruction}\n")
         
@@ -275,28 +311,41 @@ Execution output:
         if use_streaming:
             print()
         
-        if result.get("success"):
+        success = result.get("success", False)
+        if success:
             attempts = len(result.get("attempts", []))
             if use_streaming:
                 print(f"✅ Success! Fixed in {attempts} attempt(s)", flush=True)
+            self._log_interaction(f"fix {target}", "autofix", True, doc_context)
             return f"✅ Fixed in {attempts} attempt(s)! Tests passed.\nTrace: {result.get('trace_id')}"
         else:
             if use_streaming:
                 print(f"❌ Couldn't fix after {len(result.get('attempts', []))} attempts", flush=True)
+            self._log_interaction(f"fix {target}", "autofix", False, doc_context)
             return f"❌ Couldn't fix after {len(result.get('attempts', []))} attempts.\nReason: {result.get('reason', 'unknown')}"
     
     def _handle_search(self, request: dict) -> str:
-        """Search codebase."""
+        """Search codebase with doc suggestions."""
         query = request.get("query", "")
         snippets = retrieve_relevant_snippets(str(self.workspace_root), query, limit=3)
         
-        if not snippets:
-            return f"🔍 No results for '{query}'"
+        # Enhance with relevant documentation
+        doc_context = enhance_with_docs(str(self.workspace_root), query)
         
-        result = f"🔍 Found {len(snippets)} matches for '{query}':\n"
+        result = ""
+        if doc_context:
+            result += doc_context + "\n\n"
+        
+        if not snippets:
+            self._log_interaction(f"search {query}", "search", False)
+            return f"{result}🔍 No code results for '{query}'" if result else f"🔍 No results for '{query}'"
+        
+        result += f"🔍 Found {len(snippets)} matches for '{query}':\n"
         for snip in snippets[:3]:
             path = snip.get("path", "unknown")[:50]
             result += f"  • {path}\n"
+        
+        self._log_interaction(f"search {query}", "search", True, doc_context)
         return result
     
     def _handle_status(self, request: dict) -> str:
