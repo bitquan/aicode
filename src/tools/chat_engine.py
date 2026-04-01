@@ -414,6 +414,19 @@ class ChatEngine:
                 "query": query,
                 "confidence": 0.8
             }
+
+        # Pattern: explicit user teaching input (must be before status keyword checks)
+        if lower.startswith(("learn:", "teach:", "remember this", "note:")):
+            lesson = user_input
+            for prefix in ("learn:", "teach:", "remember this", "note:"):
+                if lower.startswith(prefix):
+                    lesson = user_input[len(prefix):].strip()
+                    break
+            return {
+                "action": "user_learn",
+                "lesson": lesson,
+                "confidence": 0.95,
+            }
         
         # Pattern: "status/how are we doing"
         if any(w in lower for w in ["status", "score", "how are we", "progress", "health"]):
@@ -430,7 +443,7 @@ class ChatEngine:
                 "memory": rest,
                 "confidence": 0.8
             }
-        
+
         # Pattern: "learn/improve/self-improve"
         if any(w in lower for w in ["learn", "improve myself", "self-improve", "self improve", "build myself"]):
             return {
@@ -696,6 +709,8 @@ class ChatEngine:
                 return self._handle_status(request)
             elif action == "remember":
                 return self._handle_remember(request)
+            elif action == "user_learn":
+                return self._handle_user_learn(request)
             elif action == "browse":
                 return self._handle_browse(request)
             elif action == "learn":
@@ -906,6 +921,28 @@ Execution output:
         
         remember_note(str(self.workspace_root), key=key, value=value)
         return f"✅ Remembered: {key} = {value}"
+
+    def _handle_user_learn(self, request: dict) -> str:
+        """Persist explicit user lesson into project + team memory stores."""
+        lesson = request.get("lesson", "").strip()
+        if not lesson:
+            return "⚠️ I can learn from your input, but I need a lesson. Try: `learn: always run targeted tests first`."
+
+        remember_note(str(self.workspace_root), key="lesson", value=lesson)
+        self.team_knowledge_base.add_entry(
+            topic="user_input",
+            note=lesson,
+            author="user",
+            tags=["learning", "feedback"],
+        )
+        self._log_interaction(f"learn: {lesson}", "user_learn", True)
+
+        return (
+            "🧠 Learned from your input\n"
+            f"  • Saved lesson: {lesson}\n"
+            "  • Stored in project memory + team knowledge base\n"
+            "  • Use `team kb user_input` to recall saved lessons"
+        )
     
     def _handle_learn(self, request: dict) -> str:
         """Trigger self-improvement cycle based on learned interactions."""
