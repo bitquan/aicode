@@ -618,7 +618,14 @@ class ChatEngine:
             }
 
         # Pattern: conversational help / capabilities
-        if lower in {"help", "hey", "hi", "hello"} or "what can you do" in lower or "capabilities" in lower:
+        if (
+            lower in {"help", "hey", "hi", "hello"}
+            or "what can you do" in lower
+            or "capabilities" in lower
+            or "what is your job" in lower
+            or "who are you" in lower
+            or "what's your job" in lower
+        ):
             return {
                 "action": "help_summary",
                 "confidence": 0.95,

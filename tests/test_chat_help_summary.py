@@ -27,6 +27,11 @@ def test_parse_what_can_you_do_maps_help_summary(engine):
     assert req['action'] == 'help_summary'
 
 
+def test_parse_what_is_your_job_maps_help_summary(engine):
+    req = engine.parse_request('what is your job?')
+    assert req['action'] == 'help_summary'
+
+
 def test_execute_help_summary_returns_capability_text(engine):
     result = engine.execute({'action': 'help_summary'})
     assert isinstance(result, str)
