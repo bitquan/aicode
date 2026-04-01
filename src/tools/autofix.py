@@ -2,6 +2,7 @@ from pathlib import Path
 import json
 
 from src.tools.circuit_breaker import should_trip_circuit_breaker
+from src.tools.autofix_state import save_autofix_state
 from src.tools.confidence import score_attempt_confidence
 from src.tools.failure_parser import classify_failure
 from src.tools.fix_memory import retrieve_similar_fixes, store_fix_memory
@@ -57,6 +58,19 @@ def run_autofix_loop(
         circuit_breaker_repeats=circuit_breaker_repeats,
         allow_multifile=allow_multifile,
         confirm_flaky=confirm_flaky,
+    )
+    save_autofix_state(
+        workspace_root,
+        trace_id,
+        {
+            "trace_id": trace_id,
+            "target_path": target_path,
+            "instruction": instruction,
+            "test_command": selected_test_command,
+            "max_attempts": max_attempts,
+            "attempts": [],
+            "status": "running",
+        },
     )
 
     if not target.exists():
@@ -178,6 +192,19 @@ def run_autofix_loop(
                 "reason": "",
             }
         )
+        save_autofix_state(
+            workspace_root,
+            trace_id,
+            {
+                "trace_id": trace_id,
+                "target_path": target_path,
+                "instruction": instruction,
+                "test_command": selected_test_command,
+                "max_attempts": max_attempts,
+                "attempts": attempts,
+                "status": "running",
+            },
+        )
 
         if test_result["success"]:
             record_tool_outcome(workspace_root, "autofix", selected_test_command, True)
@@ -197,6 +224,19 @@ def run_autofix_loop(
                     "success": True,
                     "summary": failure.get("summary", ""),
                     "confidence": confidence,
+                },
+            )
+            save_autofix_state(
+                workspace_root,
+                trace_id,
+                {
+                    "trace_id": trace_id,
+                    "target_path": target_path,
+                    "instruction": instruction,
+                    "test_command": selected_test_command,
+                    "max_attempts": max_attempts,
+                    "attempts": attempts,
+                    "status": "completed",
                 },
             )
             return {
@@ -283,6 +323,20 @@ def run_autofix_loop(
             "success": False,
             "summary": last_failure.get("summary", ""),
             "confidence": _get_last_confidence(attempts),
+        },
+    )
+    save_autofix_state(
+        workspace_root,
+        trace_id,
+        {
+            "trace_id": trace_id,
+            "target_path": target_path,
+            "instruction": instruction,
+            "test_command": selected_test_command,
+            "max_attempts": max_attempts,
+            "attempts": attempts,
+            "status": "failed",
+            "reason": stop_reason or "max_attempts_reached",
         },
     )
     return {

@@ -1,17 +1,26 @@
 import sys
 import json
+import os
 from pathlib import Path
 
 from src.agents.coding_agent import CodingAgent
+from src.tools.approval_policy import check_action_approval
+from src.tools.audit_export import export_audit_markdown
+from src.tools.autofix_state import load_autofix_state
 from src.tools.autofix import run_autofix_loop
+from src.tools.dependency_inventory import read_dependency_inventory
 from src.tools.docs_assistant import build_doc_update
 from src.tools.eval_runner import run_evaluation_suite
+from src.tools.gate_runner import run_regression_gate
 from src.tools.context_packer import pack_context
 from src.tools.patch_guard import validate_unified_diff
 from src.tools.read_policy import ReadFirstPolicy, check_read_first
+from src.tools.release_notes import generate_release_notes
+from src.tools.retention import cleanup_reports
 from src.tools.repo_index import build_file_index
 from src.tools.semantic_retriever import retrieve_relevant_snippets
 from src.tools.symbol_index import build_symbol_index
+from src.tools.telemetry import summarize_telemetry
 from src.tools.fix_memory import retrieve_similar_fixes
 from src.tools.project_memory import get_notes, remember_note, search_notes
 from src.tools.task_planner import build_task_plan
@@ -50,6 +59,14 @@ def _print_usage():
     print("  python -m src.main project-memory get [key]")
     print("  python -m src.main project-memory search <query>")
     print("  python -m src.main policy-recommend <task_type> <default_command>")
+    print("  python -m src.main policy-check <action> [--role ROLE] [--auto]")
+    print("  python -m src.main gate [test_command]")
+    print("  python -m src.main telemetry")
+    print("  python -m src.main release-notes <version>")
+    print("  python -m src.main audit-export <trace_id>")
+    print("  python -m src.main retention-clean [--days N]")
+    print("  python -m src.main deps")
+    print("  python -m src.main resume-autofix <trace_id>")
     print("  python -m src.main eval")
 
 def main():
@@ -243,6 +260,80 @@ def main():
         print(recommend_command(str(Path.cwd()), task_type, default_command))
         return
 
+    if args and args[0] == "policy-check":
+        if len(args) < 2:
+            print("Usage: python -m src.main policy-check <action> [--role ROLE] [--auto]")
+            return
+        action = args[1]
+        role = os.getenv("APP_ROLE", "developer")
+        auto = "--auto" in args
+        if "--role" in args:
+            idx = args.index("--role")
+            if idx + 1 < len(args):
+                role = args[idx + 1]
+        print(check_action_approval(action=action, role=role, auto_apply_requested=auto))
+        return
+
+    if args and args[0] == "gate":
+        command = " ".join(args[1:]).strip() if len(args) > 1 else "python -m pytest -q"
+        print(run_regression_gate(command))
+        return
+
+    if args and args[0] == "telemetry":
+        print(summarize_telemetry(str(Path.cwd())))
+        return
+
+    if args and args[0] == "release-notes":
+        if len(args) != 2:
+            print("Usage: python -m src.main release-notes <version>")
+            return
+        print(generate_release_notes(str(Path.cwd()), version=args[1]))
+        return
+
+    if args and args[0] == "audit-export":
+        if len(args) != 2:
+            print("Usage: python -m src.main audit-export <trace_id>")
+            return
+        print(export_audit_markdown(str(Path.cwd()), args[1]))
+        return
+
+    if args and args[0] == "retention-clean":
+        days = 14
+        if "--days" in args:
+            idx = args.index("--days")
+            if idx + 1 < len(args):
+                days = int(args[idx + 1])
+        print(cleanup_reports(str(Path.cwd()), older_than_days=days))
+        return
+
+    if args and args[0] == "deps":
+        print(read_dependency_inventory(str(Path.cwd())))
+        return
+
+    if args and args[0] == "resume-autofix":
+        if len(args) != 2:
+            print("Usage: python -m src.main resume-autofix <trace_id>")
+            return
+        state = load_autofix_state(str(Path.cwd()), args[1])
+        if not state:
+            print("Autofix state not found.")
+            return
+        if state.get("status") == "completed":
+            print({"message": "Trace already completed", "trace_id": args[1]})
+            return
+        attempts_so_far = len(state.get("attempts", []))
+        max_attempts = max(1, int(state.get("max_attempts", 3)) - attempts_so_far)
+        result = run_autofix_loop(
+            agent=agent,
+            workspace_root=str(Path.cwd()),
+            target_path=state["target_path"],
+            instruction=f"{state['instruction']}\n\nResume from trace {args[1]}",
+            test_command=state.get("test_command"),
+            max_attempts=max_attempts,
+        )
+        print(result)
+        return
+
     if args and args[0] == "eval":
         print(run_evaluation_suite())
         return
@@ -317,6 +408,11 @@ def main():
             return
 
         auto_apply = "--yes" in args
+        role = os.getenv("APP_ROLE", "developer")
+        approval = check_action_approval("edit", role=role, auto_apply_requested=auto_apply)
+        if auto_apply and not approval["allowed"]:
+            print(f"Auto-apply blocked by policy: {approval['reason']}")
+            auto_apply = False
         clean_args = [arg for arg in args[1:] if arg != "--yes"]
         target_path = clean_args[0]
         instruction = " ".join(clean_args[1:]).strip()

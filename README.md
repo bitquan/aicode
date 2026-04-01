@@ -78,6 +78,19 @@ poetry run python -m src.main policy-recommend autofix "python -m pytest -q"
 poetry run python -m src.main eval
 ```
 
+Governance and operations helpers:
+
+```bash
+poetry run python -m src.main gate
+poetry run python -m src.main telemetry
+poetry run python -m src.main release-notes 0.2.0
+poetry run python -m src.main audit-export <trace_id>
+poetry run python -m src.main retention-clean --days 14
+poetry run python -m src.main deps
+poetry run python -m src.main policy-check edit --role developer --auto
+poetry run python -m src.main resume-autofix <trace_id>
+```
+
 ## Edit a File (Patch Workflow)
 Use the model to rewrite a specific file from an instruction:
 

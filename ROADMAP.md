@@ -72,50 +72,46 @@ Build a local-first coding assistant that can:
 
 ## Phase 5 — Developer Workflows Parity
 
- [x] 26) Multi-mode assistant actions: explain, implement, refactor, optimize, secure (MVP: `mode` command)
- [x] 28) Debug assistant mode (MVP guidance via `debug-guide` command)
- [x] 29) Notebook assistant mode (MVP guidance via `notebook-guide` command)
- [x] 30) Documentation assistant mode (MVP via `doc-update` summary generation)
- [x] 31) Task planner mode with visible checklist and progress updates (MVP via `task-plan`)
-
-## Proof Log (latest)
- [x] 32) Persistent project memory (MVP: JSONL notes via `project-memory` commands)
- [x] 34) Prompt optimization from outcome data (MVP: strategy score tracking + selection)
- [x] 35) Tool policy learning (MVP: command outcome tracking + recommendation)
- [x] 36) "Similar issue retrieval" before starting new repairs (MVP preflight hints in autofix)
-- `python -m pytest -q` now passes with expanded coverage (`17 passed`).
-- Forced-failure proof: `python -m src.main autofix .tmp_rollback_demo.py "Set x to 999" --tests "python -c \"import sys; sys.exit(1)\"" --max-attempts 1` prints rollback and file remains `x = 1`.
- [x] 38) End-to-end evaluation suite (MVP: `eval` command for capability checks)
- New ten-at-once proof #2: Added `mode`, `debug-guide`, `notebook-guide`, `task-plan`, `doc-update`, `project-memory`, `policy-recommend`, and `eval` commands; integrated prompt/tool learning into autofix; suite now passes `59 passed`.
-- New five-at-once proof #3: flaky detection categorizes `flaky rerun happened`, repair planner returns related files, pytest node IDs are extracted into focused repro steps, and fix-memory retrieval returns similar past attempts.
-- New ten-at-once proof: `autofix --multi` used planned companion files, `--no-flaky-confirm` changed flaky handling, `blocker` and `memory` commands returned structured data, confidence scores were emitted, and full suite passes (`43 passed`).
-- Latest proof: `python -m pytest -q` passes with expanded coverage (`52 passed`), `python -m src.main index|symbols|search` now returns workspace-only results, commit `00d65cd` created, and pushed successfully to `origin/main` (`https://github.com/bitquan/aicode.git`).
+ - [x] 26) Multi-mode assistant actions: explain, implement, refactor, optimize, secure (MVP: `mode` command)
+ - [x] 27) Terminal copilot mode (MVP command loop: help/plan/generate/edit/capabilities)
+ - [x] 28) Debug assistant mode (MVP guidance via `debug-guide` command)
+ - [x] 29) Notebook assistant mode (MVP guidance via `notebook-guide` command)
+ - [x] 30) Documentation assistant mode (MVP via `doc-update` summary generation)
+ - [x] 31) Task planner mode with visible checklist and progress updates (MVP via `task-plan`)
 
 ## Phase 6 — Learning System (Do More Each Time)
 
-- [ ] 32) Persistent project memory (decisions, conventions, gotchas)
+- [x] 32) Persistent project memory (MVP: JSONL notes via `project-memory` commands)
 - [x] 33) Fix memory (MVP persistent JSONL store + retrieval hints by target/category)
-- [ ] 34) Prompt optimization from outcome data (A/B strategy)
-- [ ] 35) Tool policy learning (which tools to call first by task type)
-- [ ] 36) "Similar issue retrieval" before starting new repairs
+- [x] 34) Prompt optimization from outcome data (MVP strategy score tracking + selection)
+- [x] 35) Tool policy learning (MVP command outcome tracking + recommendation)
+- [x] 36) "Similar issue retrieval" before starting new repairs (MVP preflight hints in autofix)
 - [x] 37) Confidence scoring + automatic escalation thresholds (MVP confidence scoring per attempt/result)
 
 ## Phase 7 — Product Quality and Ops
 
-- [ ] 38) End-to-end evaluation suite (golden tasks and expected outcomes)
-- [ ] 39) Regression CI gate (block degraded behavior)
+- [x] 38) End-to-end evaluation suite (MVP: `eval` command for capability checks)
+- [x] 39) Regression CI gate (MVP: `gate` command executes tests + eval checks)
 - [ ] 40) Performance and cost budgets per workflow
-- [ ] 41) Telemetry dashboard (success, retries, failure categories)
-- [ ] 42) Versioned releases with migration notes
-- [ ] 43) Crash-safe state and resumable tasks
+- [x] 41) Telemetry dashboard (MVP: `telemetry` summary command)
+- [x] 42) Versioned releases with migration notes (MVP: `release-notes` generator)
+- [x] 43) Crash-safe state and resumable tasks (MVP: persisted autofix state + `resume-autofix`)
 
 ## Phase 8 — Governance, Security, and Team Scale
 
-- [ ] 44) Role-based approval policies (auto-apply vs review-required)
-- [ ] 45) Audit logs for prompts, tool calls, patches, and outcomes
-- [ ] 46) Dependency and license scanning before merge
-- [ ] 47) Data retention and privacy controls
+- [x] 44) Role-based approval policies (MVP: `policy-check`, edit auto-apply role guard)
+- [x] 45) Audit logs for prompts, tool calls, patches, and outcomes (MVP: audit export command)
+- [ ] 46) Dependency and license scanning before merge (MVP: dependency inventory via `deps`; license scan pending)
+- [x] 47) Data retention and privacy controls (MVP: `retention-clean`)
 - [ ] 48) Team playbooks (incident response, rollback, hotfix protocols)
+
+## Proof Log (latest)
+
+- `python -m pytest -q` passes (`67 passed`).
+- `python -m src.main gate` returns `passed: True` (tests + eval checks).
+- `python -m src.main telemetry` returns trace/event/fix-memory summary.
+- `python -m src.main deps` returns dependency inventory from `pyproject.toml`.
+- `python -m src.main policy-check edit --role developer --auto` correctly blocks auto-apply.
 
 ---
 
