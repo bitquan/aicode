@@ -164,6 +164,7 @@ class ChatEngine:
         self.data_schema_analyzer = DataSchemaAnalyzer(str(self.workspace_root))
         self.diff_visualization = DiffVisualization(str(self.workspace_root))
         self.interaction_log = []  # Track interactions for learning
+        self._last_applied_preferences: list[dict[str, str]] = []
         if load_context:
             self._load_context()
     
@@ -1070,6 +1071,7 @@ Execution output:
 
     def _apply_user_preferences(self, instruction: str, request_intent: str) -> str:
         """Append learned user preferences to execution prompts when available."""
+        self._last_applied_preferences = []
         has_structured_preferences = len(get_preferences(str(self.workspace_root), active_only=False)) > 0
         retrieved = retrieve_preferences(
             workspace_root=str(self.workspace_root),
@@ -1077,6 +1079,14 @@ Execution output:
             top_k=3,
         )
         if retrieved:
+            self._last_applied_preferences = [
+                {
+                    "preference_id": str(item.get("preference_id", "")),
+                    "statement": str(item.get("statement", "")),
+                    "retrieval_reason": str(item.get("retrieval_reason", "")),
+                }
+                for item in retrieved
+            ]
             lines = [
                 f"- {item['statement']} ({item['retrieval_reason']})"
                 for item in retrieved
@@ -1115,8 +1125,21 @@ Execution output:
         if not lessons:
             return instruction
 
+        self._last_applied_preferences = [
+            {
+                "preference_id": "legacy_note",
+                "statement": item,
+                "retrieval_reason": "legacy lesson fallback",
+            }
+            for item in lessons[:3]
+        ]
+
         preference_block = "\n\nUser Preferences:\n" + "\n".join(f"- {item}" for item in lessons[:3])
         return f"{instruction}{preference_block}" if instruction else preference_block.strip()
+
+    def get_last_applied_preferences(self) -> list[dict[str, str]]:
+        """Return preferences applied to the most recent generate/autofix call."""
+        return list(self._last_applied_preferences)
 
     def _infer_preference_category(self, lesson: str) -> str:
         """Infer a baseline preference category from freeform lesson text."""

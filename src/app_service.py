@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from src.tools.chat_engine import ChatEngine
-from src.tools.learning_events import record_prompt_event
+from src.tools.learning_events import record_output_trace, record_prompt_event
 
 
 class AppService:
@@ -23,8 +23,14 @@ class AppService:
         action = request.get("action", "unknown")
         confidence = request.get("confidence", 0.0)
         result_status = self._infer_result_status(response)
+        applied_preferences = self._engine.get_last_applied_preferences()
+        applied_preference_ids = [
+            pref.get("preference_id", "")
+            for pref in applied_preferences
+            if pref.get("preference_id")
+        ]
 
-        record_prompt_event(
+        prompt_event = record_prompt_event(
             workspace_root=str(self.workspace_root),
             raw_prompt=command,
             intent=action,
@@ -34,11 +40,21 @@ class AppService:
             source="api",
         )
 
+        output_trace = record_output_trace(
+            workspace_root=str(self.workspace_root),
+            prompt_event_id=str(prompt_event.get("id", "")),
+            applied_preferences=applied_preference_ids,
+            tools_used=[action],
+            eval_summary=result_status,
+        )
+
         return {
             "command": command,
             "action": action,
             "confidence": confidence,
             "response": response,
+            "applied_preferences": applied_preference_ids,
+            "output_trace_id": output_trace.get("output_id"),
         }
 
     def _infer_result_status(self, response: str) -> str:

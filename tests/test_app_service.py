@@ -11,6 +11,7 @@ def test_run_command_returns_structured_payload(mock_chat_engine, tmp_path):
     engine = MagicMock()
     engine.parse_request.return_value = {"action": "status", "confidence": 0.9}
     engine.execute.return_value = "ok"
+    engine.get_last_applied_preferences.return_value = []
     mock_chat_engine.return_value = engine
 
     service = AppService(str(tmp_path))
@@ -20,6 +21,8 @@ def test_run_command_returns_structured_payload(mock_chat_engine, tmp_path):
     assert result["action"] == "status"
     assert result["confidence"] == 0.9
     assert result["response"] == "ok"
+    assert result["applied_preferences"] == []
+    assert result["output_trace_id"].startswith("out_")
 
 
 @patch("src.app_service.ChatEngine")
@@ -27,6 +30,7 @@ def test_run_command_records_prompt_event(mock_chat_engine, tmp_path):
     engine = MagicMock()
     engine.parse_request.return_value = {"action": "help_summary", "confidence": 0.95}
     engine.execute.return_value = "👋 I can help"
+    engine.get_last_applied_preferences.return_value = []
     mock_chat_engine.return_value = engine
 
     service = AppService(str(tmp_path))
@@ -36,6 +40,13 @@ def test_run_command_records_prompt_event(mock_chat_engine, tmp_path):
     assert events_path.exists()
 
     last_row = json.loads(events_path.read_text(encoding="utf-8").splitlines()[-1])
+    assert last_row["id"].startswith("evt_")
     assert last_row["raw_prompt"] == "what is your job?"
     assert last_row["intent"] == "help_summary"
     assert last_row["result_status"] == "success"
+
+    traces_path = tmp_path / ".autofix_reports" / "output_traces.jsonl"
+    assert traces_path.exists()
+    trace_row = json.loads(traces_path.read_text(encoding="utf-8").splitlines()[-1])
+    assert trace_row["output_id"].startswith("out_")
+    assert trace_row["prompt_event_id"] == last_row["id"]

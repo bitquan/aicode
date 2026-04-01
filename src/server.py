@@ -238,6 +238,8 @@ class AppCommandResponse(BaseModel):
     action: str
     confidence: float
     response: str
+    applied_preferences: list[str] = []
+    output_trace_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
