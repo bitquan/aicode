@@ -45,21 +45,21 @@ Build a local-first coding assistant that can:
 
 ## Phase 2 — Repo Intelligence
 
-- [ ] 8) Fast file indexing (tree, language, size, ownership)
-- [ ] 9) Symbol index (functions/classes/usages)
-- [ ] 10) Semantic retrieval for relevant code chunks
-- [ ] 11) Context-packing strategy with token budgeting
+- [x] 8) Fast file indexing (tree, language, size, ownership)
+- [x] 9) Symbol index (functions/classes/usages)
+- [x] 10) Semantic retrieval for relevant code chunks
+- [x] 11) Context-packing strategy with token budgeting
 - [x] 12) Change-impact analysis (MVP: traceback + test companion file awareness in repair planner)
-- [ ] 13) "Read first, edit second" policy enforcement
+- [x] 13) "Read first, edit second" policy enforcement
 
 ## Phase 3 — Safe Change Engine
 
 - [x] 14) Add true unified-diff patch mode (MVP-adjacent: multi-file rewrite apply mode + related-file planning)
-- [ ] 15) Patch validation (reject malformed/unsafe diffs)
-- [ ] 16) Conflict detection and automatic rebase/retry strategy
-- [ ] 17) Rollback snapshots for every apply operation
-- [ ] 18) Workspace boundary and command allowlist hardening
-- [ ] 19) Secret leak and dangerous command detection before execution
+- [x] 15) Patch validation (reject malformed/unsafe diffs)
+- [x] 16) Conflict detection and automatic rebase/retry strategy (MVP: conflict helper)
+- [x] 17) Rollback snapshots for every apply operation
+- [x] 18) Workspace boundary and command allowlist hardening (MVP: guarded test command execution)
+- [x] 19) Secret leak and dangerous command detection before execution (MVP: dangerous-token command guard)
 
 ## Phase 4 — Autonomous Verify-and-Fix Loops
 
@@ -92,6 +92,7 @@ Build a local-first coding assistant that can:
 - New five-at-once proof #2: prompt layering is active (`system` + `developer` + `tool` + `user`), provider retries with backoff, audit export available via `python -m src.main audit <trace_id>`, and failed autofix runs now emit both blocker JSON and `_repro.md` minimal repro artifacts.
 - New five-at-once proof #3: flaky detection categorizes `flaky rerun happened`, repair planner returns related files, pytest node IDs are extracted into focused repro steps, and fix-memory retrieval returns similar past attempts.
 - New ten-at-once proof: `autofix --multi` used planned companion files, `--no-flaky-confirm` changed flaky handling, `blocker` and `memory` commands returned structured data, confidence scores were emitted, and full suite passes (`43 passed`).
+- Latest proof: `python -m pytest -q` passes with expanded coverage (`52 passed`), `python -m src.main index|symbols|search` now returns workspace-only results, commit `00d65cd` created, and pushed successfully to `origin/main` (`https://github.com/bitquan/aicode.git`).
 
 ## Phase 6 — Learning System (Do More Each Time)
 

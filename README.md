@@ -52,6 +52,17 @@ poetry run python -m src.main blocker <trace_id>
 poetry run python -m src.main memory <target_path> <failure_category>
 ```
 
+Repo intelligence and safety helpers:
+
+```bash
+poetry run python -m src.main index
+poetry run python -m src.main symbols
+poetry run python -m src.main search "autofix confidence"
+poetry run python -m src.main context "autofix confidence" --chars 2000
+poetry run python -m src.main read src/main.py
+poetry run python -m src.main validate-diff src/main.py
+```
+
 ## Edit a File (Patch Workflow)
 Use the model to rewrite a specific file from an instruction:
 
