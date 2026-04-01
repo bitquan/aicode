@@ -13,7 +13,7 @@ class AppService:
 
     def __init__(self, workspace_root: str = "."):
         self.workspace_root = Path(workspace_root).resolve()
-        self._engine = ChatEngine(str(self.workspace_root))
+        self._engine = ChatEngine(str(self.workspace_root), load_context=False)
 
     def run_command(self, command: str) -> dict[str, Any]:
         """Parse and execute a natural-language command."""

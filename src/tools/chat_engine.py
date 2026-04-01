@@ -125,7 +125,7 @@ class MarkdownRenderer:
 class ChatEngine:
     """Conversational interface that understands coding requests."""
     
-    def __init__(self, workspace_root: str = "."):
+    def __init__(self, workspace_root: str = ".", load_context: bool = True):
         self.workspace_root = Path(workspace_root).resolve()
         self.agent = CodingAgent()
         self.context = {}
@@ -162,7 +162,8 @@ class ChatEngine:
         self.data_schema_analyzer = DataSchemaAnalyzer(str(self.workspace_root))
         self.diff_visualization = DiffVisualization(str(self.workspace_root))
         self.interaction_log = []  # Track interactions for learning
-        self._load_context()
+        if load_context:
+            self._load_context()
     
     def _load_context(self):
         """Load repo context for smarter responses."""
