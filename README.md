@@ -163,6 +163,100 @@ poetry run pytest -q
 - Fix memory is persisted in `.autofix_reports/fix_memory.jsonl` and reused as hints in later repairs.
 - Autofix reports confidence scores and can switch to focused pytest node-id reruns when node IDs are detected.
 
+## OpenAI-Compatible Local API Server
+
+The repo ships a FastAPI server that exposes an OpenAI-compatible HTTP API backed by your local Ollama model.
+
+### Start the server
+
+```bash
+poetry run python -m src.server
+```
+
+The server listens on port **8005** by default. Override with the `PORT` environment variable:
+
+```bash
+PORT=9000 poetry run python -m src.server
+```
+
+Other relevant environment variables (same as CLI):
+- `OLLAMA_BASE_URL` (default: `http://127.0.0.1:11434`)
+- `OLLAMA_MODEL` (default: `qwen2.5-coder:7b`)
+- `WORKSPACE_ROOT` — root directory used by file tools (default: current working directory)
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET`  | `/v1/models` | List available models |
+| `POST` | `/v1/chat/completions` | OpenAI-compatible chat (streaming + tool calling) |
+
+### Example: curl
+
+```bash
+curl http://127.0.0.1:8005/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen2.5-coder:7b",
+    "messages": [{"role": "user", "content": "Write a Python hello-world function."}],
+    "stream": false
+  }'
+```
+
+Streaming example:
+
+```bash
+curl http://127.0.0.1:8005/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen2.5-coder:7b",
+    "messages": [{"role": "user", "content": "Explain async/await in Python."}],
+    "stream": true
+  }'
+```
+
+### Example: Python OpenAI SDK
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://127.0.0.1:8005/v1",
+    api_key="ollama",  # any non-empty string
+)
+
+response = client.chat.completions.create(
+    model="qwen2.5-coder:7b",
+    messages=[{"role": "user", "content": "Read the file src/main.py and summarise it."}],
+)
+print(response.choices[0].message.content)
+```
+
+Streaming with the SDK:
+
+```python
+stream = client.chat.completions.create(
+    model="qwen2.5-coder:7b",
+    messages=[{"role": "user", "content": "Run the tests and tell me if they pass."}],
+    stream=True,
+)
+for chunk in stream:
+    print(chunk.choices[0].delta.content or "", end="", flush=True)
+```
+
+### Built-in tools
+
+The server automatically provides the model with these workspace tools (no extra client configuration needed):
+
+| Tool | Description |
+|------|-------------|
+| `read_file(path)` | Read a file relative to `WORKSPACE_ROOT` |
+| `search(query)` | Search repository files for relevant snippets |
+| `run_tests(command)` | Execute a test command (e.g. `pytest tests/`) |
+| `edit_file(path, instruction)` | Rewrite a file using a plain-English instruction |
+
+Pass `"tool_choice": "none"` to disable tool calling for a request.
+
 ## Prompt Layers
 Prompts are now layered from:
 - `src/prompts/system_prompt.txt`
