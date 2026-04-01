@@ -273,6 +273,19 @@ def test_chat_completions_non_streaming(client):
     assert data["choices"][0]["finish_reason"] == "stop"
 
 
+def test_dashboard_data_endpoint(client):
+    resp = client.get("/dashboard/data")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert "workspace" in payload
+    assert "roadmap_percent" in payload
+
+def test_dashboard_page_endpoint(client):
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers.get("content-type", "")
+    assert "aicode Dashboard" in resp.text
+
 # ---------------------------------------------------------------------------
 # POST /v1/chat/completions — tool loop executes tool and returns final answer
 # ---------------------------------------------------------------------------

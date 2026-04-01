@@ -16,10 +16,10 @@
 
 ## Layer 3: Integration & APIs (Connect to External Systems)
 
-- [ ] 9. **Git Integration** - Chat explains diffs, reviews commits, suggests commit messages
-- [ ] 10. **Automated PR Generation** - Chat creates pull requests with changes and descriptions
-- [ ] 11. **VS Code Extension** - Inline chat inside the editor with code context
-- [ ] 12. **Web UI Dashboard** - Browser interface showing chat, knowledge base, metrics, improvement graphs
+- [x] 9. **Git Integration** - Chat explains diffs, reviews commits, suggests commit messages
+- [x] 10. **Automated PR Generation** - Chat creates pull requests with changes and descriptions
+- [x] 11. **VS Code Extension** - Inline chat inside the editor with code context
+- [x] 12. **Web UI Dashboard** - Browser interface showing chat, knowledge base, metrics, improvement graphs
 
 ## Layer 4: Multi-Agent System (Team of Specialized Agents)
 

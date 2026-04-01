@@ -27,6 +27,10 @@ from src.tools.knowledge_transfer import KnowledgeTransfer
 from src.tools.prompt_lab import PromptLab
 from src.tools.tool_builder import ToolBuilder
 from src.tools.architecture_analyzer import ArchitectureAnalyzer
+from src.tools.git_integration import GitIntegration
+from src.tools.pr_generator import PRGenerator
+from src.tools.vscode_integration import VSCodeIntegration
+from src.tools.dashboard import DashboardBuilder
 
 
 class MarkdownRenderer:
@@ -117,6 +121,10 @@ class ChatEngine:
         self.prompt_lab = PromptLab(str(self.workspace_root))
         self.tool_builder = ToolBuilder(str(self.workspace_root))
         self.architecture_analyzer = ArchitectureAnalyzer(str(self.workspace_root))
+        self.git_integration = GitIntegration(str(self.workspace_root))
+        self.pr_generator = PRGenerator(str(self.workspace_root))
+        self.vscode_integration = VSCodeIntegration(str(self.workspace_root))
+        self.dashboard_builder = DashboardBuilder(str(self.workspace_root))
         self.interaction_log = []  # Track interactions for learning
         self._load_context()
     
@@ -468,6 +476,35 @@ class ChatEngine:
                 "action": "architecture",
                 "confidence": 0.85,
             }
+
+        # Pattern: git helper commands
+        if lower.startswith(("git status", "git diff", "git review", "commit message")):
+            return {
+                "action": "git",
+                "query": lower,
+                "confidence": 0.9,
+            }
+
+        # Pattern: PR generation commands
+        if lower.startswith(("generate pr", "pr draft", "create pr")):
+            return {
+                "action": "pr",
+                "confidence": 0.9,
+            }
+
+        # Pattern: VS Code integration commands
+        if lower.startswith(("vscode setup", "vscode", "editor setup")):
+            return {
+                "action": "vscode",
+                "confidence": 0.85,
+            }
+
+        # Pattern: dashboard summary commands
+        if lower.startswith(("dashboard", "web dashboard", "metrics dashboard")):
+            return {
+                "action": "dashboard",
+                "confidence": 0.85,
+            }
         
         # Fallback: treat as code generation
         return {
@@ -513,8 +550,16 @@ class ChatEngine:
                 return self._handle_tool_builder(request)
             elif action == "architecture":
                 return self._handle_architecture(request)
+            elif action == "git":
+                return self._handle_git(request)
+            elif action == "pr":
+                return self._handle_pr(request)
+            elif action == "vscode":
+                return self._handle_vscode(request)
+            elif action == "dashboard":
+                return self._handle_dashboard(request)
             else:
-                return "❓ I didn't understand that. Try: 'write <code>', 'fix <file>', 'review <file>', 'debug <file>', 'profile <file>', 'coverage <file>', 'export knowledge', 'import knowledge <file>', 'prompt lab', 'build tool <name>', 'architecture', 'search <query>', 'browse <path>', 'learn', or 'status'"
+                return "❓ I didn't understand that. Try: 'write <code>', 'fix <file>', 'review <file>', 'debug <file>', 'profile <file>', 'coverage <file>', 'export knowledge', 'import knowledge <file>', 'prompt lab', 'build tool <name>', 'architecture', 'git status', 'generate pr', 'vscode setup', 'dashboard', 'search <query>', 'browse <path>', 'learn', or 'status'"
         except Exception as e:
             return f"⚠️ Error: {str(e)[:100]}"
     
@@ -873,6 +918,70 @@ Top Issues by File:
   • Recommendations: {len(recommendations)}
 
 {chr(10).join(f"  • {item}" for item in recommendations[:5])}"""
+
+    def _handle_git(self, request: dict) -> str:
+        """Provide git status/diff review and commit message suggestions."""
+        query = request.get("query", "git status")
+
+        if "diff" in query or "review" in query:
+            summary = self.git_integration.diff_summary()
+            if "error" in summary:
+                self._log_interaction(query, "git", False)
+                return f"❌ {summary['error']}"
+            lines = ["🔎 Git Diff Summary:"]
+            for item in summary.get("files", [])[:10]:
+                lines.append(f"  • {item['path']}: +{item['added']} / -{item['removed']}")
+            self._log_interaction(query, "git", True)
+            return "\n".join(lines) if len(lines) > 1 else "🔎 No unstaged changes found"
+
+        if "commit message" in query:
+            message = self.git_integration.suggest_commit_message()
+            if "error" in message:
+                self._log_interaction(query, "git", False)
+                return f"❌ {message['error']}"
+            self._log_interaction(query, "git", True)
+            return f"💬 Suggested commit message: {message.get('message')}"
+
+        status = self.git_integration.status_summary()
+        if "error" in status:
+            self._log_interaction(query, "git", False)
+            return f"❌ {status['error']}"
+        self._log_interaction(query, "git", True)
+        return f"📦 Git status: {status.get('changed_files', 0)} changed file(s)"
+
+    def _handle_pr(self, request: dict) -> str:
+        """Generate a pull request draft from git changes."""
+        result = self.pr_generator.generate_pr()
+        if "error" in result:
+            self._log_interaction("generate pr", "pr", False)
+            return f"❌ {result['error']}"
+        self._log_interaction("generate pr", "pr", True)
+        return f"✅ PR draft generated: {result.get('path')} ({result.get('changed_files')} files)"
+
+    def _handle_vscode(self, request: dict) -> str:
+        """Prepare VS Code project files and show workspace snapshot."""
+        tasks = self.vscode_integration.ensure_tasks()
+        launch = self.vscode_integration.ensure_launch()
+        snapshot = self.vscode_integration.workspace_snapshot()
+        self._log_interaction("vscode setup", "vscode", True)
+        return (
+            "🧩 VS Code integration ready\n"
+            f"  • tasks: {tasks.get('status')} ({tasks.get('path')})\n"
+            f"  • launch: {launch.get('status')} ({launch.get('path')})\n"
+            f"  • python files: {snapshot.get('python_files')} | test files: {snapshot.get('test_files')}"
+        )
+
+    def _handle_dashboard(self, request: dict) -> str:
+        """Show a compact dashboard summary from status and roadmap."""
+        payload = self.dashboard_builder.build()
+        self._log_interaction("dashboard", "dashboard", True)
+        return (
+            "📊 Dashboard Summary\n"
+            f"  • Workspace: {payload.get('workspace')}\n"
+            f"  • Readiness: {payload.get('readiness')}\n"
+            f"  • Benchmark: {payload.get('benchmark_score')}\n"
+            f"  • Roadmap: {payload.get('roadmap_percent')}% ({payload.get('roadmap_done')}/{payload.get('roadmap_total')})"
+        )
 
 def run_chat_session(workspace_root: str = "."):
     """Run interactive chat session."""

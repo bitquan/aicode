@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, AsyncGenerator
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from src.config.settings import load_settings
@@ -31,6 +31,7 @@ from src.providers.ollama_provider import OllamaProvider
 from src.tools.repo_index import build_file_index
 from src.tools.semantic_retriever import retrieve_relevant_snippets
 from src.tools.test_runner import run_test_command
+from src.tools.dashboard import DashboardBuilder, render_dashboard_html
 
 # ---------------------------------------------------------------------------
 # App bootstrap
@@ -52,6 +53,7 @@ _prompt_layers = load_prompt_layers(_prompts_dir)
 _system_prompt = _prompt_layers.get("system", "")
 
 WORKSPACE_ROOT = Path(os.getenv("WORKSPACE_ROOT", str(Path.cwd()))).resolve()
+_dashboard_builder = DashboardBuilder(str(WORKSPACE_ROOT))
 
 # Maximum iterations in the tool-calling loop before forcing a final response.
 # Prevents infinite loops when the model keeps requesting tool calls.
@@ -482,6 +484,19 @@ async def chat_completions(req: ChatCompletionRequest) -> Any:
             raise HTTPException(status_code=502, detail="Upstream provider error") from exc
 
     return _make_non_streaming_response(completion_id, model_name, content)
+
+
+@app.get("/dashboard/data")
+def dashboard_data() -> dict[str, Any]:
+    """Return dashboard metrics as JSON for web UI or API clients."""
+    return _dashboard_builder.build()
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard_page() -> str:
+    """Return a lightweight HTML dashboard page."""
+    payload = _dashboard_builder.build()
+    return render_dashboard_html(payload)
 
 
 # ---------------------------------------------------------------------------
