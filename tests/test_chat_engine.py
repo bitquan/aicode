@@ -165,3 +165,72 @@ def test_chat_engine_execute_unknown_action(mock_status, mock_index, mock_agent)
     
     # Should return helpful error with examples
     assert "❓" in response or "didn't understand" in response.lower()
+
+
+@patch('src.tools.chat_engine.CodingAgent')
+@patch('src.tools.chat_engine.build_file_index')
+@patch('src.tools.chat_engine.build_status_report')
+def test_chat_engine_parse_streaming_flags(mock_status, mock_index, mock_agent):
+    """Test that streaming flags are set for long-running operations."""
+    mock_agent.return_value = MagicMock()
+    mock_index.return_value = {}
+    mock_status.return_value = {}
+    engine = ChatEngine(".")
+    
+    # Generate should have streaming enabled
+    request = engine.parse_request("write a function")
+    assert request.get("stream") is True
+    assert request["action"] == "generate"
+    
+    # Autofix should have streaming enabled
+    request = engine.parse_request("fix src/main.py")
+    assert request.get("stream") is True
+    assert request["action"] == "autofix"
+    
+    # Browse should not have streaming
+    request = engine.parse_request("browse src")
+    assert request.get("stream") is None or request.get("stream") is False
+    assert request["action"] == "browse"
+
+
+@patch('src.tools.chat_engine.CodingAgent')
+@patch('src.tools.chat_engine.build_file_index')
+@patch('src.tools.chat_engine.build_status_report')
+def test_chat_engine_generate_with_streaming(mock_status, mock_index, mock_agent):
+    """Test code generation with streaming output enabled."""
+    mock_agent_instance = MagicMock()
+    mock_agent_instance.generate_code.return_value = "def hello():\n    return 'world'"
+    mock_agent_instance.evaluate_code.return_value = {"execution_ok": True, "stdout": "world"}
+    
+    mock_agent.return_value = mock_agent_instance
+    mock_index.return_value = {}
+    mock_status.return_value = {}
+    
+    engine = ChatEngine(".")
+    request = {"action": "generate", "instruction": "write hello function", "stream": True}
+    response = engine.execute(request)
+    
+    # Should contain success indicator
+    assert "✅" in response or "Success" in response
+
+
+@patch('src.tools.chat_engine.CodingAgent')
+@patch('src.tools.chat_engine.build_file_index')
+@patch('src.tools.chat_engine.build_status_report')
+def test_chat_engine_generate_without_streaming(mock_status, mock_index, mock_agent):
+    """Test code generation with streaming disabled."""
+    mock_agent_instance = MagicMock()
+    mock_agent_instance.generate_code.return_value = "def hello():\n    return 'world'"
+    mock_agent_instance.evaluate_code.return_value = {"execution_ok": True, "stdout": "world"}
+    
+    mock_agent.return_value = mock_agent_instance
+    mock_index.return_value = {}
+    mock_status.return_value = {}
+    
+    engine = ChatEngine(".")
+    request = {"action": "generate", "instruction": "write hello function", "stream": False}
+    response = engine.execute(request)
+    
+    # Should still return a valid response
+    assert response is not None
+    assert len(response) > 0

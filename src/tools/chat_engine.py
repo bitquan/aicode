@@ -140,7 +140,8 @@ class ChatEngine:
                 "action": "autofix",
                 "target": target,
                 "instruction": f"Fix issues in {target}",
-                "confidence": 0.9
+                "confidence": 0.9,
+                "stream": True
             }
         
         # Pattern: "write <description>"
@@ -149,7 +150,8 @@ class ChatEngine:
             return {
                 "action": "generate",
                 "instruction": desc,
-                "confidence": 0.85
+                "confidence": 0.85,
+                "stream": True
             }
         
         # Pattern: "search/find <query>"
@@ -209,19 +211,33 @@ class ChatEngine:
             return f"⚠️ Error: {str(e)[:100]}"
     
     def _handle_generate(self, request: dict) -> str:
-        """Generate code from prompt."""
+        """Generate code from prompt with streaming output."""
         instruction = request.get("instruction", "")
+        use_streaming = request.get("stream", True)
+        
+        if use_streaming:
+            print("🔄 Generating... ", end="", flush=True)
+        
         code = self.agent.generate_code(instruction)
+        
+        if use_streaming:
+            print("\n\n📄 Code generated:", flush=True)
+            print("```python")
+            print(code)
+            print("```\n")
+            print("🧪 Testing... ", end="", flush=True)
+        
         eval_result = self.agent.evaluate_code(code)
         
-        status = "✅ Success" if eval_result["execution_ok"] else "⚠️ Has issues"
-        output = eval_result.get("stdout", "")[:200]
+        if use_streaming:
+            print("Done!\n", flush=True)
         
-        return f"""Generated code:
-```python
-{code[:300]}...
-```
-{status} - Execution output: {output}"""
+        status = "✅ Success" if eval_result["execution_ok"] else "⚠️ Has issues"
+        output = eval_result.get("stdout", "")
+        
+        return f"""{status}
+Execution output:
+{output}"""
     
     def _handle_edit(self, request: dict) -> str:
         """Edit a file with instruction."""
@@ -235,13 +251,18 @@ class ChatEngine:
         return f"📝 I'll {instruction.lower()} in {target}. Use 'autofix {target}' to apply changes and test."
     
     def _handle_autofix(self, request: dict) -> str:
-        """Run autofix loop on target file."""
+        """Run autofix loop on target file with streaming feedback."""
         target = request.get("target", "src/main.py")
         instruction = request.get("instruction", "")
+        use_streaming = request.get("stream", True)
         
         target_path = self.workspace_root / target
         if not target_path.exists():
             return f"❌ File not found: {target}"
+        
+        if use_streaming:
+            print(f"🔧 Running autofix on {target}... ", flush=True)
+            print(f"   Instruction: {instruction}\n")
         
         result = run_autofix_loop(
             agent=self.agent,
@@ -251,10 +272,17 @@ class ChatEngine:
             max_attempts=3
         )
         
+        if use_streaming:
+            print()
+        
         if result.get("success"):
             attempts = len(result.get("attempts", []))
+            if use_streaming:
+                print(f"✅ Success! Fixed in {attempts} attempt(s)", flush=True)
             return f"✅ Fixed in {attempts} attempt(s)! Tests passed.\nTrace: {result.get('trace_id')}"
         else:
+            if use_streaming:
+                print(f"❌ Couldn't fix after {len(result.get('attempts', []))} attempts", flush=True)
             return f"❌ Couldn't fix after {len(result.get('attempts', []))} attempts.\nReason: {result.get('reason', 'unknown')}"
     
     def _handle_search(self, request: dict) -> str:
