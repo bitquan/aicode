@@ -595,6 +595,13 @@ class ChatEngine:
                 "confidence": 0.85,
             }
 
+        # Pattern: conversational help / capabilities
+        if lower in {"help", "hey", "hi", "hello"} or "what can you do" in lower or "capabilities" in lower:
+            return {
+                "action": "help_summary",
+                "confidence": 0.95,
+            }
+
         # Pattern: "security scan <target>" / "vulnerability scan"
         if lower.startswith(("security scan", "vulnerability scan", "scan security")):
             target = lower.split(" ", 2)[-1] if lower.count(" ") >= 2 else "src/"
@@ -753,6 +760,8 @@ class ChatEngine:
                 return self._handle_schema_analyze(request)
             elif action == "diff_visualize":
                 return self._handle_diff_visualize(request)
+            elif action == "help_summary":
+                return self._handle_help_summary(request)
             else:
                 return "❓ I didn't understand that. Try: 'write <code>', 'fix <file>', 'review <file>', 'debug <file>', 'profile <file>', 'coverage <file>', 'export knowledge', 'import knowledge <file>', 'prompt lab', 'build tool <name>', 'architecture', 'analyze diagram <text>', 'analyze schema', 'visualize diff', 'git status', 'generate pr', 'vscode setup', 'dashboard', 'collaborate <task>', 'route task <task>', 'agent memory <topic>', 'security scan <dir>', 'generate docs <file>', 'generate api <file>', 'resolve dependencies', 'optimize costs', 'team kb <query>', 'audit trail', 'rbac', 'model route <task>', 'team analytics', 'language summary <path>', 'framework expert <task>', 'search <query>', 'browse <path>', 'learn', or 'status'"
         except Exception as e:
@@ -1494,6 +1503,18 @@ Top Issues by File:
                 f"  • {item.get('file')}: +{item.get('added', 0)} -{item.get('removed', 0)} {item.get('visual', '')}"
             )
         return "\n".join(lines)
+
+    def _handle_help_summary(self, request: dict) -> str:
+        """Return a concise conversational capability summary."""
+        self._log_interaction("help", "help_summary", True)
+        return (
+            "👋 I can help with coding tasks across your repo.\n"
+            "  • Build/Edit/Fix code: write, fix, autofix, review, debug, profile\n"
+            "  • Quality & Ops: coverage, security scan, deps, cost optimize, status\n"
+            "  • Team tools: team kb, audit trail, rbac, team analytics\n"
+            "  • Architecture tools: analyze diagram, analyze schema, visualize diff\n"
+            "Try: 'status', 'security scan src/', or 'analyze schema'."
+        )
 
 def run_chat_session(workspace_root: str = "."):
     """Run interactive chat session."""
