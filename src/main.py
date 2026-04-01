@@ -30,6 +30,7 @@ from src.tools.retention import cleanup_reports
 from src.tools.license_scanner import scan_dependency_licenses
 from src.tools.incident_automation import build_incident_timeline, generate_incident_report
 from src.tools.playbook_manager import get_playbook_status, scaffold_playbooks
+from src.tools.self_improve import run_self_improvement_cycles
 from src.tools.status_report import build_status_report, export_status_markdown
 from src.tools.repo_index import build_file_index
 from src.tools.semantic_retriever import retrieve_relevant_snippets
@@ -91,6 +92,7 @@ def _print_usage():
     print("  python -m src.main benchmark")
     print("  python -m src.main status")
     print("  python -m src.main status-export")
+    print("  python -m src.main self-improve [--cycles N] [--target-score X]")
     print("  python -m src.main resume-autofix <trace_id>")
     print("  python -m src.main eval")
 
@@ -429,6 +431,21 @@ def main():
 
     if args and args[0] == "status-export":
         print(export_status_markdown(str(Path.cwd())))
+        return
+
+    if args and args[0] == "self-improve":
+        cycles = 1
+        target_score = 95.0
+        if "--cycles" in args:
+            idx = args.index("--cycles")
+            if idx + 1 < len(args):
+                cycles = int(args[idx + 1])
+        if "--target-score" in args:
+            idx = args.index("--target-score")
+            if idx + 1 < len(args):
+                target_score = float(args[idx + 1])
+
+        print(run_self_improvement_cycles(str(Path.cwd()), cycles=cycles, target_score=target_score))
         return
 
     if args and args[0] == "resume-autofix":

@@ -104,6 +104,7 @@ poetry run python -m src.main incident-report <trace_id>
 poetry run python -m src.main benchmark
 poetry run python -m src.main status
 poetry run python -m src.main status-export
+poetry run python -m src.main self-improve --cycles 3 --target-score 95
 ```
 
 ## Edit a File (Patch Workflow)
