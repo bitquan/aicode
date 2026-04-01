@@ -45,8 +45,8 @@
 
 ## Layer 7: Extended Language Support
 
-- [ ] 26. **Multi-Language Support** - Extend beyond Python (JavaScript, Go, Rust, etc)
-- [ ] 27. **Framework-Specific Experts** - Specialized chat modes (Django expert, FastAPI expert, etc)
+- [x] 26. **Multi-Language Support** - Extend beyond Python (JavaScript, Go, Rust, etc)
+- [x] 27. **Framework-Specific Experts** - Specialized chat modes (Django expert, FastAPI expert, etc)
 
 ## Layer 8: Vision & Context (Advanced Understanding)
 
@@ -66,5 +66,5 @@
 
 **Progress**:
 - Total Items: 30
-- Completed: 0
+- Completed: 27
 - In Progress: 0

@@ -44,6 +44,8 @@ from src.tools.audit_trail import AuditTrail
 from src.tools.role_permissions import RolePermissions
 from src.tools.custom_llm_support import CustomLLMSupport
 from src.tools.analytics_dashboard import AnalyticsDashboard
+from src.tools.multi_language_support import MultiLanguageSupport
+from src.tools.framework_experts import FrameworkExperts
 
 
 class MarkdownRenderer:
@@ -151,6 +153,8 @@ class ChatEngine:
         self.role_permissions = RolePermissions(str(self.workspace_root))
         self.custom_llm_support = CustomLLMSupport(str(self.workspace_root))
         self.analytics_dashboard = AnalyticsDashboard(str(self.workspace_root))
+        self.multi_language_support = MultiLanguageSupport(str(self.workspace_root))
+        self.framework_experts = FrameworkExperts(str(self.workspace_root))
         self.interaction_log = []  # Track interactions for learning
         self._load_context()
     
@@ -614,6 +618,23 @@ class ChatEngine:
         if lower.startswith(("team analytics", "analytics dashboard", "productivity metrics")):
             return {"action": "team_analytics", "confidence": 0.9}
 
+        # Pattern: "language summary" / "multi language" / "language support"
+        if lower.startswith(("language summary", "multi language", "language support")):
+            target = "src/"
+            parts = lower.split(" ", 2)
+            if len(parts) == 3:
+                target = parts[2].strip() or "src/"
+            return {"action": "multi_language", "target": target, "confidence": 0.9}
+
+        # Pattern: "framework expert" / "django expert" / "fastapi expert"
+        if lower.startswith(("framework expert", "django expert", "fastapi expert", "react expert")):
+            task = lower
+            for prefix in ("framework expert", "django expert", "fastapi expert", "react expert"):
+                if task.startswith(prefix):
+                    task = task.replace(prefix, "", 1).strip()
+                    break
+            return {"action": "framework_expert", "task": task or "general", "confidence": 0.9}
+
         # Fallback: treat as code generation
         return {
             "action": "generate",
@@ -692,8 +713,12 @@ class ChatEngine:
                 return self._handle_custom_llm(request)
             elif action == "team_analytics":
                 return self._handle_team_analytics(request)
+            elif action == "multi_language":
+                return self._handle_multi_language(request)
+            elif action == "framework_expert":
+                return self._handle_framework_expert(request)
             else:
-                return "❓ I didn't understand that. Try: 'write <code>', 'fix <file>', 'review <file>', 'debug <file>', 'profile <file>', 'coverage <file>', 'export knowledge', 'import knowledge <file>', 'prompt lab', 'build tool <name>', 'architecture', 'git status', 'generate pr', 'vscode setup', 'dashboard', 'collaborate <task>', 'route task <task>', 'agent memory <topic>', 'security scan <dir>', 'generate docs <file>', 'generate api <file>', 'resolve dependencies', 'optimize costs', 'team kb <query>', 'audit trail', 'rbac', 'model route <task>', 'team analytics', 'search <query>', 'browse <path>', 'learn', or 'status'"
+                return "❓ I didn't understand that. Try: 'write <code>', 'fix <file>', 'review <file>', 'debug <file>', 'profile <file>', 'coverage <file>', 'export knowledge', 'import knowledge <file>', 'prompt lab', 'build tool <name>', 'architecture', 'git status', 'generate pr', 'vscode setup', 'dashboard', 'collaborate <task>', 'route task <task>', 'agent memory <topic>', 'security scan <dir>', 'generate docs <file>', 'generate api <file>', 'resolve dependencies', 'optimize costs', 'team kb <query>', 'audit trail', 'rbac', 'model route <task>', 'team analytics', 'language summary <path>', 'framework expert <task>', 'search <query>', 'browse <path>', 'learn', or 'status'"
         except Exception as e:
             return f"⚠️ Error: {str(e)[:100]}"
     
@@ -1325,6 +1350,44 @@ Top Issues by File:
             f"  • Denied actions: {quality.get('denied_actions', 0)}\n"
             f"  • Total cost: ${cost.get('total_cost_usd', 0.0):.6f}"
         )
+
+    def _handle_multi_language(self, request: dict) -> str:
+        """Summarize repository language mix and dominant language."""
+        target = request.get("target", "src/")
+        summary = self.multi_language_support.language_summary(target)
+        self._log_interaction(f"language summary {target}", "multi_language", "error" not in summary)
+        if "error" in summary:
+            return f"⚠️ Multi-Language Support: {summary['error']}"
+
+        lines = [
+            "🌐 Multi-Language Summary",
+            f"  • Target: {target}",
+            f"  • Scanned files: {summary.get('scanned_files', 0)}",
+            f"  • Dominant language: {summary.get('dominant_language', 'unknown')}",
+        ]
+        for item in summary.get("languages", [])[:6]:
+            lines.append(f"  • {item.get('language')}: {item.get('files')} files")
+        return "\n".join(lines)
+
+    def _handle_framework_expert(self, request: dict) -> str:
+        """Recommend framework expert mode and provide guidance."""
+        task = request.get("task", "general")
+        recommendation = self.framework_experts.recommend_expert(task)
+        framework = recommendation.get("framework", "fastapi")
+        advice = self.framework_experts.expert_advice(framework, task)
+        self._log_interaction(f"framework expert {task}", "framework_expert", "error" not in advice)
+        if "error" in advice:
+            return f"⚠️ Framework Expert: {advice['error']}"
+
+        lines = [
+            "🧠 Framework Expert Guidance",
+            f"  • Framework: {framework}",
+            f"  • Reason: {recommendation.get('reason', 'n/a')}",
+            f"  • Focus: {advice.get('focus', 'general')}",
+        ]
+        for tip in advice.get("tips", [])[:3]:
+            lines.append(f"  • {tip}")
+        return "\n".join(lines)
 
 def run_chat_session(workspace_root: str = "."):
     """Run interactive chat session."""
