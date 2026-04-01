@@ -1,8 +1,10 @@
 from pathlib import Path
 import json
+from time import perf_counter
 
 from src.tools.circuit_breaker import should_trip_circuit_breaker
 from src.tools.autofix_state import save_autofix_state
+from src.tools.budget_tracker import record_metric
 from src.tools.confidence import score_attempt_confidence
 from src.tools.failure_parser import classify_failure
 from src.tools.fix_memory import retrieve_similar_fixes, store_fix_memory
@@ -39,6 +41,7 @@ def run_autofix_loop(
     confirm_flaky: bool = True,
 ):
     trace_id = new_trace_id()
+    start = perf_counter()
     target = _resolve_target(workspace_root, target_path)
     selected_test_command = test_command or select_test_command(workspace_root, target_path)
     selected_test_command = recommend_command(workspace_root, "autofix", selected_test_command)
@@ -207,6 +210,14 @@ def run_autofix_loop(
         )
 
         if test_result["success"]:
+            duration = perf_counter() - start
+            record_metric(
+                workspace_root=workspace_root,
+                workflow="autofix",
+                duration_seconds=duration,
+                success=True,
+                attempts=len(attempts),
+            )
             record_tool_outcome(workspace_root, "autofix", selected_test_command, True)
             record_prompt_outcome(workspace_root, prompt_strategy, True)
             remember_note(
@@ -287,6 +298,14 @@ def run_autofix_loop(
         )
 
     apply_file_edit(workspace_root, target_path, original_content)
+    duration = perf_counter() - start
+    record_metric(
+        workspace_root=workspace_root,
+        workflow="autofix",
+        duration_seconds=duration,
+        success=False,
+        attempts=len(attempts),
+    )
     record_tool_outcome(workspace_root, "autofix", selected_test_command, False)
     record_prompt_outcome(workspace_root, prompt_strategy, False)
     remember_note(

@@ -1,14 +1,26 @@
+from time import perf_counter
+
+from src.tools.budget_tracker import record_metric
 from src.tools.eval_runner import run_evaluation_suite
 from src.tools.test_runner import run_test_command
 
 
-def run_regression_gate(test_command: str = "python -m pytest -q") -> dict:
+def run_regression_gate(test_command: str = "python -m pytest -q", workspace_root: str = ".") -> dict:
+    start = perf_counter()
     tests = run_test_command(test_command)
     evals = run_evaluation_suite()
+    duration = perf_counter() - start
     passed = bool(tests.get("success")) and evals.get("failed", 1) == 0
+    record_metric(
+        workspace_root=workspace_root,
+        workflow="gate",
+        duration_seconds=duration,
+        success=passed,
+    )
     return {
         "passed": passed,
         "test_command": test_command,
+        "duration_seconds": round(duration, 4),
         "tests": tests,
         "eval": evals,
     }

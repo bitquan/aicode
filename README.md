@@ -87,6 +87,14 @@ poetry run python -m src.main release-notes 0.2.0
 poetry run python -m src.main audit-export <trace_id>
 poetry run python -m src.main retention-clean --days 14
 poetry run python -m src.main deps
+poetry run python -m src.main license-scan
+poetry run python -m src.main playbooks scaffold
+poetry run python -m src.main playbooks status
+poetry run python -m src.main compliance
+poetry run python -m src.main budget show
+poetry run python -m src.main budget set max_gate_seconds 120
+poetry run python -m src.main budget check
+poetry run python -m src.main budget metrics 20
 poetry run python -m src.main policy-check edit --role developer --auto
 poetry run python -m src.main resume-autofix <trace_id>
 ```

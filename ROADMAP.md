@@ -92,7 +92,7 @@ Build a local-first coding assistant that can:
 
 - [x] 38) End-to-end evaluation suite (MVP: `eval` command for capability checks)
 - [x] 39) Regression CI gate (MVP: `gate` command executes tests + eval checks)
-- [ ] 40) Performance and cost budgets per workflow
+- [x] 40) Performance and cost budgets per workflow (MVP: `budget show|set|check|metrics` + runtime metric recording)
 - [x] 41) Telemetry dashboard (MVP: `telemetry` summary command)
 - [x] 42) Versioned releases with migration notes (MVP: `release-notes` generator)
 - [x] 43) Crash-safe state and resumable tasks (MVP: persisted autofix state + `resume-autofix`)
@@ -101,9 +101,9 @@ Build a local-first coding assistant that can:
 
 - [x] 44) Role-based approval policies (MVP: `policy-check`, edit auto-apply role guard)
 - [x] 45) Audit logs for prompts, tool calls, patches, and outcomes (MVP: audit export command)
-- [ ] 46) Dependency and license scanning before merge (MVP: dependency inventory via `deps`; license scan pending)
+- [x] 46) Dependency and license scanning before merge (MVP: `license-scan` and compliance summary)
 - [x] 47) Data retention and privacy controls (MVP: `retention-clean`)
-- [ ] 48) Team playbooks (incident response, rollback, hotfix protocols)
+- [x] 48) Team playbooks (MVP scaffold/status commands and templates)
 
 ## Proof Log (latest)
 
@@ -112,6 +112,10 @@ Build a local-first coding assistant that can:
 - `python -m src.main telemetry` returns trace/event/fix-memory summary.
 - `python -m src.main deps` returns dependency inventory from `pyproject.toml`.
 - `python -m src.main policy-check edit --role developer --auto` correctly blocks auto-apply.
+- `python -m src.main playbooks scaffold` created incident/rollback/hotfix playbooks under `docs/playbooks`.
+- `python -m src.main budget show|check` returned configured thresholds and pass/fail checks.
+- `python -m src.main license-scan` and `python -m src.main compliance` both passed on current dependencies.
+- `python -m pytest -q` now passes (`72 passed`).
 
 ---
 

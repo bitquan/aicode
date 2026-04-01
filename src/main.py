@@ -8,6 +8,8 @@ from src.tools.approval_policy import check_action_approval
 from src.tools.audit_export import export_audit_markdown
 from src.tools.autofix_state import load_autofix_state
 from src.tools.autofix import run_autofix_loop
+from src.tools.budget_tracker import evaluate_budgets, load_budget_config, read_metrics, set_budget_value
+from src.tools.compliance_summary import build_compliance_summary
 from src.tools.dependency_inventory import read_dependency_inventory
 from src.tools.docs_assistant import build_doc_update
 from src.tools.eval_runner import run_evaluation_suite
@@ -17,6 +19,8 @@ from src.tools.patch_guard import validate_unified_diff
 from src.tools.read_policy import ReadFirstPolicy, check_read_first
 from src.tools.release_notes import generate_release_notes
 from src.tools.retention import cleanup_reports
+from src.tools.license_scanner import scan_dependency_licenses
+from src.tools.playbook_manager import get_playbook_status, scaffold_playbooks
 from src.tools.repo_index import build_file_index
 from src.tools.semantic_retriever import retrieve_relevant_snippets
 from src.tools.symbol_index import build_symbol_index
@@ -66,6 +70,10 @@ def _print_usage():
     print("  python -m src.main audit-export <trace_id>")
     print("  python -m src.main retention-clean [--days N]")
     print("  python -m src.main deps")
+    print("  python -m src.main license-scan")
+    print("  python -m src.main playbooks scaffold|status")
+    print("  python -m src.main compliance")
+    print("  python -m src.main budget show|set|check|metrics ...")
     print("  python -m src.main resume-autofix <trace_id>")
     print("  python -m src.main eval")
 
@@ -276,7 +284,7 @@ def main():
 
     if args and args[0] == "gate":
         command = " ".join(args[1:]).strip() if len(args) > 1 else "python -m pytest -q"
-        print(run_regression_gate(command))
+        print(run_regression_gate(command, workspace_root=str(Path.cwd())))
         return
 
     if args and args[0] == "telemetry":
@@ -308,6 +316,53 @@ def main():
 
     if args and args[0] == "deps":
         print(read_dependency_inventory(str(Path.cwd())))
+        return
+
+    if args and args[0] == "license-scan":
+        print(scan_dependency_licenses(str(Path.cwd())))
+        return
+
+    if args and args[0] == "playbooks":
+        if len(args) < 2:
+            print("Usage: python -m src.main playbooks scaffold|status")
+            return
+        if args[1] == "scaffold":
+            print(scaffold_playbooks(str(Path.cwd())))
+            return
+        if args[1] == "status":
+            print(get_playbook_status(str(Path.cwd())))
+            return
+        print("Usage: python -m src.main playbooks scaffold|status")
+        return
+
+    if args and args[0] == "compliance":
+        print(build_compliance_summary(str(Path.cwd())))
+        return
+
+    if args and args[0] == "budget":
+        if len(args) < 2:
+            print("Usage: python -m src.main budget show|set|check|metrics ...")
+            return
+        sub = args[1]
+        if sub == "show":
+            print(load_budget_config(str(Path.cwd())))
+            return
+        if sub == "set":
+            if len(args) != 4:
+                print("Usage: python -m src.main budget set <key> <value>")
+                return
+            key = args[2]
+            value = float(args[3])
+            print(set_budget_value(str(Path.cwd()), key, value))
+            return
+        if sub == "check":
+            print(evaluate_budgets(str(Path.cwd())))
+            return
+        if sub == "metrics":
+            limit = int(args[2]) if len(args) > 2 else 20
+            print(read_metrics(str(Path.cwd()), limit=limit))
+            return
+        print("Usage: python -m src.main budget show|set|check|metrics ...")
         return
 
     if args and args[0] == "resume-autofix":
