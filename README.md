@@ -257,6 +257,38 @@ The server automatically provides the model with these workspace tools (no extra
 
 Pass `"tool_choice": "none"` to disable tool calling for a request.
 
+## Source of Truth Architecture (App + Thin Extension)
+
+The app is the source of truth. Both CLI and API call the same shared service layer:
+
+- Shared service: `src/app_service.py`
+- CLI entry: `python -m src.main app-command "<natural language command>"`
+- API entry: `POST /v1/aicode/command`
+
+This keeps behavior centralized and avoids duplicating logic in editor clients.
+
+### App command API example
+
+```bash
+curl http://127.0.0.1:8005/v1/aicode/command \
+  -H "Content-Type: application/json" \
+  -d '{"command": "status"}'
+```
+
+### Thin VS Code extension
+
+A thin extension client is included in `vscode-extension/`. It sends commands to `/v1/aicode/command` and renders responses in a VS Code output channel.
+
+Build/run:
+
+```bash
+cd vscode-extension
+npm install
+npm run compile
+```
+
+Then open `vscode-extension` in VS Code and press `F5`.
+
 ## Prompt Layers
 Prompts are now layered from:
 - `src/prompts/system_prompt.txt`

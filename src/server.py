@@ -32,6 +32,7 @@ from src.tools.repo_index import build_file_index
 from src.tools.semantic_retriever import retrieve_relevant_snippets
 from src.tools.test_runner import run_test_command
 from src.tools.dashboard import DashboardBuilder, render_dashboard_html
+from src.app_service import AppService
 
 # ---------------------------------------------------------------------------
 # App bootstrap
@@ -54,6 +55,7 @@ _system_prompt = _prompt_layers.get("system", "")
 
 WORKSPACE_ROOT = Path(os.getenv("WORKSPACE_ROOT", str(Path.cwd()))).resolve()
 _dashboard_builder = DashboardBuilder(str(WORKSPACE_ROOT))
+_app_service = AppService(str(WORKSPACE_ROOT))
 
 # Maximum iterations in the tool-calling loop before forcing a final response.
 # Prevents infinite loops when the model keeps requesting tool calls.
@@ -225,6 +227,17 @@ class ChatCompletionRequest(BaseModel):
     tool_choice: str | dict[str, Any] | None = None
     temperature: float | None = None
     max_tokens: int | None = None
+
+
+class AppCommandRequest(BaseModel):
+    command: str
+
+
+class AppCommandResponse(BaseModel):
+    command: str
+    action: str
+    confidence: float
+    response: str
 
 
 # ---------------------------------------------------------------------------
@@ -497,6 +510,15 @@ def dashboard_page() -> str:
     """Return a lightweight HTML dashboard page."""
     payload = _dashboard_builder.build()
     return render_dashboard_html(payload)
+
+
+@app.post("/v1/aicode/command", response_model=AppCommandResponse)
+def app_command(req: AppCommandRequest) -> dict[str, Any]:
+    """Run one natural-language app command via the source-of-truth app service."""
+    command = req.command.strip()
+    if not command:
+        raise HTTPException(status_code=400, detail="Command must not be empty")
+    return _app_service.run_command(command)
 
 
 # ---------------------------------------------------------------------------

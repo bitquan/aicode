@@ -1,0 +1,45 @@
+{
+  "name": "aicode-thin-client",
+  "displayName": "aicode Thin Client",
+  "description": "Thin VS Code client for the local aicode app service",
+  "version": "0.0.1",
+  "publisher": "aicode-local",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "aicode.ask",
+        "title": "aicode: Ask"
+      },
+      {
+        "command": "aicode.status",
+        "title": "aicode: Check API Status"
+      }
+    ],
+    "configuration": {
+      "title": "aicode",
+      "properties": {
+        "aicode.baseUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8005",
+          "description": "Base URL of local aicode server"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.6.3"
+  }
+}

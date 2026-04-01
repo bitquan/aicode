@@ -45,6 +45,7 @@ from src.tools.tool_policy import recommend_command
 from src.tools.logger import load_audit_events
 from src.tools.patch_applier import preview_diff, apply_file_edit
 from src.tools.chat_engine import run_chat_session
+from src.app_service import AppService
 from src.ui.terminal_ui import run_terminal_ui
 
 
@@ -59,6 +60,7 @@ def _print_usage():
     print("  python -m src.main plan \"<request>\"")
     print("  python -m src.main tui")
     print("  python -m src.main chat")
+    print("  python -m src.main app-command \"<natural language command>\"")
     print("  python -m src.main autofix <relative_path> \"<instruction>\" [--tests \"<cmd>\"] [--max-attempts N] [--multi] [--no-flaky-confirm]")
     print("  python -m src.main audit <trace_id>")
     print("  python -m src.main memory <target_path> <failure_category>")
@@ -125,6 +127,15 @@ def main():
 
     if args and args[0] == "chat":
         run_chat_session(str(Path.cwd()))
+        return
+
+    if args and args[0] == "app-command":
+        command = " ".join(args[1:]).strip()
+        if not command:
+            print("Usage: python -m src.main app-command \"<natural language command>\"")
+            return
+        service = AppService(str(Path.cwd()))
+        print(service.run_command(command))
         return
 
     if args and args[0] == "audit":
