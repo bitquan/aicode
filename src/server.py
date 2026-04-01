@@ -32,6 +32,7 @@ from src.tools.repo_index import build_file_index
 from src.tools.semantic_retriever import retrieve_relevant_snippets
 from src.tools.test_runner import run_test_command
 from src.tools.dashboard import DashboardBuilder, render_dashboard_html
+from src.tools.learning_metrics import build_learning_metrics
 from src.app_service import AppService
 
 # ---------------------------------------------------------------------------
@@ -512,6 +513,12 @@ def dashboard_page() -> str:
     """Return a lightweight HTML dashboard page."""
     payload = _dashboard_builder.build()
     return render_dashboard_html(payload)
+
+
+@app.get("/metrics/learning")
+def learning_metrics_data(limit: int = 1000) -> dict[str, Any]:
+    """Return baseline learning metrics as JSON."""
+    return build_learning_metrics(str(WORKSPACE_ROOT), limit=max(10, min(limit, 5000)))
 
 
 @app.post("/v1/aicode/command", response_model=AppCommandResponse)

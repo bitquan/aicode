@@ -225,3 +225,26 @@ def read_correction_events(workspace_root: str, limit: int = 100) -> list[dict[s
     """Read recent correction events."""
     rows = _read_jsonl(_correction_path(workspace_root))
     return rows[-limit:]
+
+
+def clear_preferences(workspace_root: str, target_preference_id: str | None = None) -> dict[str, Any]:
+    """Deactivate one (or all) active learned preferences."""
+    rows = get_preferences(workspace_root, active_only=False)
+    changed = 0
+
+    for row in rows:
+        if not row.get("active", True):
+            continue
+        if target_preference_id and row.get("preference_id") != target_preference_id:
+            continue
+        row["active"] = False
+        row["timestamp"] = _now_iso()
+        changed += 1
+
+    if changed > 0:
+        _write_preferences(workspace_root, rows)
+
+    return {
+        "cleared": changed,
+        "target_preference_id": target_preference_id,
+    }

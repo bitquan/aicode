@@ -50,7 +50,13 @@ from src.tools.architecture_diagram_understanding import ArchitectureDiagramUnde
 from src.tools.data_schema_analyzer import DataSchemaAnalyzer
 from src.tools.diff_visualization import DiffVisualization
 from src.tools.prompt_taxonomy import classify_prompt_type
-from src.tools.learned_preferences import add_preference, apply_correction, get_preferences, retrieve_preferences
+from src.tools.learned_preferences import (
+    add_preference,
+    apply_correction,
+    clear_preferences,
+    get_preferences,
+    retrieve_preferences,
+)
 from src.tools.learning_metrics import build_learning_metrics
 
 
@@ -488,6 +494,13 @@ class ChatEngine:
                 "correction_text": correction_text,
                 "confidence": 0.95,
             }
+
+        # Pattern: clear learned preferences
+        if lower.startswith(("clear learned preference", "clear learned preferences", "clear preferences")):
+            return {
+                "action": "clear_preferences",
+                "confidence": 0.95,
+            }
         
         # Pattern: "status/how are we doing"
         if any(w in lower for w in ["status", "score", "how are we", "progress", "health"]):
@@ -799,6 +812,8 @@ class ChatEngine:
                 return self._handle_user_learn(request)
             elif action == "user_correct":
                 return self._handle_user_correct(request)
+            elif action == "clear_preferences":
+                return self._handle_clear_preferences(request)
             elif action == "browse":
                 return self._handle_browse(request)
             elif action == "learn":
@@ -1080,6 +1095,17 @@ Execution output:
             f"  • Type: {correction_type}\n"
             f"  • Target: {result.get('target_preference_id') or 'latest active'}"
             f"{created_text}"
+        )
+
+    def _handle_clear_preferences(self, request: dict) -> str:
+        """Deactivate learned preferences for project-level reset controls."""
+        result = clear_preferences(str(self.workspace_root))
+        cleared = int(result.get("cleared", 0))
+        self._log_interaction("clear preferences", "clear_preferences", True)
+        return (
+            "🧹 Cleared learned preferences\n"
+            f"  • Deactivated: {cleared}\n"
+            "  • Future generate/autofix calls will run without preference injection until you add new lessons"
         )
 
     def _apply_user_preferences(self, instruction: str, request_intent: str) -> str:
