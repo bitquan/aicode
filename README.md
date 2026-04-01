@@ -1,6 +1,7 @@
 # Coding AI Program (Local Ollama)
 
 Master plan and checklist: [ROADMAP.md](ROADMAP.md)
+Learning baseline spec: [docs/LEARNING_BASELINE_V1.md](docs/LEARNING_BASELINE_V1.md)
 
 ## Overview
 This app generates code from a prompt using a local Ollama model and then performs basic validation by parsing and executing the returned code with a timeout.
