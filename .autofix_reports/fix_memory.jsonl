@@ -1,0 +1,3 @@
+{"trace_id": "b627355c47c6", "target_path": ".tmp_flaky_demo.py", "failure_category": "flaky", "strategy": "none", "success": false, "summary": "flaky rerun happened"}
+{"ts": "2026-04-01T04:42:46.258995+00:00", "trace_id": "7902d98fe986", "target_path": "src/multi_demo.py", "failure_category": "unknown", "strategy": "generic_patch", "success": true, "summary": ".                                                                        [100%]", "confidence": 0.99}
+{"ts": "2026-04-01T04:42:48.867526+00:00", "trace_id": "735bf356b6c3", "target_path": "src/multi_demo.py", "failure_category": "flaky", "strategy": "none", "success": false, "summary": "flaky rerun happened", "confidence": 0.4}

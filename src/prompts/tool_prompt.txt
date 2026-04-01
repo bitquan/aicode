@@ -1,0 +1,6 @@
+Available tools:
+- File rewrite for single target file
+- Test command execution
+- Diff preview and apply
+- Rollback on failure
+Use tools conservatively and report blockers clearly.

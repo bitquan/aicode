@@ -1,0 +1,4 @@
+Follow project constraints strictly.
+Make minimal, safe edits.
+Prefer deterministic behavior and clear outputs.
+When repairing, preserve original intent and avoid unrelated changes.

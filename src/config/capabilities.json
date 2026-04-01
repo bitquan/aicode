@@ -1,0 +1,12 @@
+{
+  "chat": true,
+  "generate_code": true,
+  "edit_file": true,
+  "evaluate_code": true,
+  "structured_actions": true,
+  "terminal_mode": true,
+  "test_loop": true,
+  "debug_mode": false,
+  "notebook_mode": false,
+  "web_fetch": false
+}
