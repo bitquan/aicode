@@ -35,10 +35,16 @@ function panelHtml(): string {
   <title>aicode Chat</title>
   <style>
     body { font-family: var(--vscode-font-family); padding: 12px; color: var(--vscode-foreground); }
-    #history { border: 1px solid var(--vscode-panel-border); border-radius: 6px; padding: 10px; height: 50vh; overflow: auto; white-space: pre-wrap; }
+    #history { border: 1px solid var(--vscode-panel-border); border-radius: 6px; padding: 10px; height: 50vh; overflow: auto; }
+    .entry { border: 1px solid var(--vscode-panel-border); border-radius: 6px; padding: 8px; margin-bottom: 8px; }
+    .prompt { font-weight: 600; margin-bottom: 6px; white-space: pre-wrap; }
+    .reply { white-space: pre-wrap; margin-bottom: 8px; }
+    .entry-actions { display: flex; justify-content: flex-end; }
     .row { margin-top: 10px; display: flex; gap: 8px; }
     input { flex: 1; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); padding: 8px; border-radius: 4px; }
     button { padding: 8px 12px; border: 1px solid var(--vscode-button-border, transparent); background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-radius: 4px; cursor: pointer; }
+    #recent { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip { font-size: 12px; padding: 4px 8px; }
     .meta { opacity: 0.8; font-size: 12px; }
   </style>
 </head>
@@ -50,24 +56,73 @@ function panelHtml(): string {
     <input id="prompt" placeholder="e.g. security scan src/ or status" />
     <button id="send">Send</button>
   </div>
+  <div id="recent"></div>
 
   <script>
     const vscode = acquireVsCodeApi();
     const history = document.getElementById('history');
+    const recent = document.getElementById('recent');
     const input = document.getElementById('prompt');
     const send = document.getElementById('send');
+    const state = vscode.getState() || { commands: [] };
+    let commandHistory = Array.isArray(state.commands) ? state.commands : [];
 
-    function append(line) {
-      history.textContent += line + "\n\n";
+    function rememberCommand(command) {
+      const next = [command, ...commandHistory.filter((item) => item !== command)];
+      commandHistory = next.slice(0, 8);
+      vscode.setState({ commands: commandHistory });
+      renderRecent();
+    }
+
+    function renderRecent() {
+      recent.innerHTML = '';
+      if (!commandHistory.length) {
+        return;
+      }
+      for (const command of commandHistory) {
+        const button = document.createElement('button');
+        button.className = 'chip';
+        button.textContent = 'Retry: ' + command;
+        button.title = command;
+        button.addEventListener('click', () => submit(command));
+        recent.appendChild(button);
+      }
+    }
+
+    function appendEntry(command, body) {
+      const card = document.createElement('div');
+      card.className = 'entry';
+
+      const prompt = document.createElement('div');
+      prompt.className = 'prompt';
+      prompt.textContent = '> ' + command;
+
+      const reply = document.createElement('div');
+      reply.className = 'reply';
+      reply.textContent = body;
+
+      const actions = document.createElement('div');
+      actions.className = 'entry-actions';
+      const retry = document.createElement('button');
+      retry.textContent = 'Retry';
+      retry.addEventListener('click', () => submit(command));
+      actions.appendChild(retry);
+
+      card.appendChild(prompt);
+      card.appendChild(reply);
+      card.appendChild(actions);
+      history.appendChild(card);
       history.scrollTop = history.scrollHeight;
     }
 
-    function submit() {
-      const value = input.value.trim();
+    function submit(commandOverride) {
+      const value = typeof commandOverride === 'string' ? commandOverride : input.value.trim();
       if (!value) return;
-      append('> ' + value);
+      rememberCommand(value);
       vscode.postMessage({ type: 'ask', command: value });
-      input.value = '';
+      if (!commandOverride) {
+        input.value = '';
+      }
       input.focus();
     }
 
@@ -79,12 +134,14 @@ function panelHtml(): string {
     window.addEventListener('message', (event) => {
       const msg = event.data;
       if (msg.type === 'result') {
-        append('[action=' + msg.action + ', confidence=' + msg.confidence + ']\\n' + msg.response);
+        appendEntry(msg.command || 'unknown', '[action=' + msg.action + ', confidence=' + msg.confidence + ']\\n' + msg.response);
       }
       if (msg.type === 'error') {
-        append('ERROR: ' + msg.message);
+        appendEntry(msg.command || 'unknown', 'ERROR: ' + msg.message);
       }
     });
+
+    renderRecent();
   </script>
 </body>
 </html>`;
@@ -151,13 +208,14 @@ export function activate(context: vscode.ExtensionContext) {
         const result = await callAppCommand(command);
         panel.webview.postMessage({
           type: 'result',
+          command,
           action: result.action,
           confidence: result.confidence,
           response: result.response,
         });
       } catch (error) {
         const text = error instanceof Error ? error.message : String(error);
-        panel.webview.postMessage({ type: 'error', message: text });
+        panel.webview.postMessage({ type: 'error', command, message: text });
       }
     });
   });

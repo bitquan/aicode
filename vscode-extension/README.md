@@ -8,6 +8,10 @@ This extension is intentionally thin: it forwards prompts to your local aicode a
 - `aicode: Open Chat Panel` — opens a lightweight webview panel for chat-style interactions backed by `POST /v1/aicode/command`
 - `aicode: Check API Status` — verifies local server reachability via a status call
 
+The chat panel includes:
+- in-panel command history chips
+- one-click `Retry` on each response card
+
 ## Setup
 
 1. Start app server:
