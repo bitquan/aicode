@@ -4,8 +4,10 @@
 
 - [ ] 1. **Interactive Debugger** - Step through code execution with chat commands ("debug main.py", "breakpoint line 42")
 - [x] 2. **Code Review Assistant** - Analyze code quality, complexity, security issues; suggest improvements
-- [ ] 3. **Performance Profiler** - Identify bottlenecks and help optimize ("profile slow function", "find memory leaks")
-- [ ] 4. **Test Coverage Analyzer** - Show untested code paths and generate missing tests
+- [x] 1. **Interactive Debugger** - Step through code execution with chat commands ("debug main.py", "breakpoint line 42")
+- [x] 2. **Code Review Assistant** - Analyze code quality, complexity, security issues; suggest improvements
+- [x] 3. **Performance Profiler** - Identify bottlenecks and help optimize ("profile slow function", "find memory leaks")
+- [x] 4. **Test Coverage Analyzer** - Show untested code paths and generate missing tests
 
 ## Layer 2: Knowledge & Learning (Improve the Knowledge Base)
 

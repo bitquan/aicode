@@ -20,6 +20,9 @@ from src.tools.project_memory import remember_note, search_notes
 from src.tools.doc_fetcher import DocFetcher, enhance_with_docs
 from src.tools.self_builder import SelfBuilder
 from src.tools.code_reviewer import CodeReviewer, format_review_report
+from src.tools.debugger import PythonDebugger, format_debug_output
+from src.tools.profiler import CodeProfiler, format_profile_output
+from src.tools.coverage_analyzer import TestCoverageAnalyzer, format_coverage_output
 
 
 class MarkdownRenderer:
@@ -103,6 +106,9 @@ class ChatEngine:
         self.doc_fetcher = DocFetcher(str(self.workspace_root))
         self.self_builder = SelfBuilder(str(self.workspace_root))
         self.code_reviewer = CodeReviewer(str(self.workspace_root))
+        self.debugger = PythonDebugger(str(self.workspace_root))
+        self.profiler = CodeProfiler(str(self.workspace_root))
+        self.coverage_analyzer = TestCoverageAnalyzer(str(self.workspace_root))
         self.interaction_log = []  # Track interactions for learning
         self._load_context()
     
@@ -127,6 +133,169 @@ class ChatEngine:
         except Exception:
             pass
     
+        def _handle_debug(self, request: dict) -> str:
+            """Debug code with execution tracing and breakpoints."""
+            target = request.get("target", "src/main.py")
+        
+            target_path = self.workspace_root / target
+            if not target_path.exists():
+                return f"❌ File not found: {target}"
+        
+            if target_path.is_file() and target.endswith(".py"):
+                print(f"\n🐛 Analyzing {target} for debugging...\n", flush=True)
+            
+                # Start debug session
+                session_result = self.debugger.start_debug_session(target)
+                if "error" in session_result:
+                    return f"❌ {session_result['error']}"
+            
+                # Get execution trace
+                trace = self.debugger.trace_execution(target)
+                call_analysis = self.debugger.analyze_call_patterns(target)
+            
+                # Format output
+                output = f"""🐛 Debug Session: {target}
+    {session_result['message']}
+
+    """
+            
+                if "functions" in trace and trace["functions"]:
+                    output += f"🔵 Functions (Total: {trace['total_functions']}):\n"
+                    for func_name, line_num in trace['functions'][:10]:
+                        output += f"  • {func_name} (line {line_num})\n"
+                    if len(trace['functions']) > 10:
+                        output += f"  ... and {len(trace['functions']) - 10} more\n"
+            
+                output += f"""
+    📊 Call Analysis:
+      Internal Calls: {len(call_analysis.get('internal_calls', []))}
+      External Calls: {len(call_analysis.get('external_calls', []))}
+
+    💡 Use 'breakpoint <line>' to set breakpoints, 'inspect' to view code, or 'learn' for improvements"""
+            
+                self._log_interaction(f"debug {target}", "debug", True)
+                return output
+        
+            return f"❌ Target must be a Python file: {target}"
+    
+    
+        def _handle_profile(self, request: dict) -> str:
+            """Profile code performance and identify bottlenecks."""
+            target = request.get("target", "src/")
+        
+            target_path = self.workspace_root / target
+        
+            print(f"\n⚡ Profiling {target}...\n", flush=True)
+        
+            if target.endswith("/") or (target_path.exists() and target_path.is_dir()):
+                # Profile directory - analyze all files
+                complexity = self.profiler.analyze_complexity(target.rstrip("/") + ".py" if target.endswith("/") else target)
+            
+                if "error" in complexity:
+                    optimization = self.profiler.suggest_optimizations(target_path.parent / "*.py")
+                    if "error" in optimization:
+                        return f"❌ Unable to profile: {target}"
+                    return format_profile_output(optimization)
+            
+                suggestions = self.profiler.suggest_optimizations(str(target_path / "*.py") if target.endswith("/") else target)
+            
+                output = f"""⚡ Performance Profile: {target}
+
+    🎯 Complexity Rating: {complexity.get('complexity_rating', 'Unknown')}
+
+    💡 Optimization Suggestions:
+    """
+            
+                if "suggestions" in suggestions:
+                    for i, sugg in enumerate(suggestions["suggestions"][:5], 1):
+                        output += f"\n{i}. {sugg['category']} ({sugg['priority'].upper()})\n"
+                        output += f"   Problem: {sugg['issue']}\n"
+                        output += f"   Solution: {sugg['suggestion']}\n"
+                        output += f"   Impact: {sugg['potential_speedup']}\n"
+            
+                self._log_interaction(f"profile {target}", "profile", True)
+                return output
+        
+            # Single file profiling
+            if not target_path.exists():
+                return f"❌ File not found: {target}"
+        
+            if target_path.is_file() and target.endswith(".py"):
+                hotspots = self.profiler.profile_function_calls(target)
+                complexity = self.profiler.analyze_complexity(target)
+            
+                if "error" in hotspots:
+                    return f"❌ {hotspots['error']}"
+            
+                formatted = format_profile_output(hotspots)
+                complexity_formatted = format_profile_output(complexity)
+            
+                self._log_interaction(f"profile {target}", "profile", True)
+                return f"{formatted}\n\n{complexity_formatted}"
+        
+            return f"❌ Target must be a Python file or directory: {target}"
+    
+    
+        def _handle_coverage(self, request: dict) -> str:
+            """Show test coverage and suggest missing tests."""
+            target = request.get("target", "src/")
+        
+            target_path = self.workspace_root / target
+        
+            print(f"\n📊 Analyzing test coverage for {target}...\n", flush=True)
+        
+            if target.endswith("/") or (target_path.exists() and target_path.is_dir()):
+                # Batch coverage analysis
+                output = f"""📊 Test Coverage Analysis: {target}
+
+    """
+            
+                # Find all Python files and analyze coverage
+                py_files = list((self.workspace_root / target).glob("*.py"))
+                if not py_files:
+                    py_files = list((self.workspace_root / target).glob("**/*.py"))
+            
+                coverage_dict = {}
+                total_coverage = 0
+            
+                for py_file in py_files[:5]:
+                    rel_path = py_file.relative_to(self.workspace_root)
+                    analysis = self.coverage_analyzer.analyze_file(str(rel_path))
+                    if "coverage_percentage" in analysis:
+                        coverage_dict[str(rel_path)] = analysis["coverage_percentage"]
+                        total_coverage += analysis["coverage_percentage"]
+            
+                if coverage_dict:
+                    avg_coverage = total_coverage / len(coverage_dict)
+                    report = self.coverage_analyzer.coverage_report(coverage_dict)
+                    formatted = format_coverage_output(report)
+                
+                    self._log_interaction(f"coverage {target}", "coverage", True)
+                    return formatted
+            
+                return f"❌ No Python files found in {target}"
+        
+            # Single file coverage
+            if not target_path.exists():
+                return f"❌ File not found: {target}"
+        
+            if target_path.is_file() and target.endswith(".py"):
+                analysis = self.coverage_analyzer.analyze_file(target)
+                suggestions = self.coverage_analyzer.suggest_missing_tests(target)
+            
+                if "error" in analysis:
+                    return f"❌ {analysis['error']}"
+            
+                formatted = format_coverage_output(analysis)
+            
+                if "suggestions" in suggestions:
+                    test_suggestions = format_coverage_output(suggestions)
+                    formatted = f"{formatted}\n\n{test_suggestions}"
+            
+                self._log_interaction(f"coverage {target}", "coverage", True)
+                return formatted
+        
+            return f"❌ Target must be a Python file or directory: {target}"
     def _log_interaction(self, query: str, action: str, success: bool, doc_context: Optional[str] = None):
         """Log interaction for learning and improvement."""
         self.interaction_log.append({
@@ -225,6 +394,33 @@ class ChatEngine:
                 "confidence": 0.9
             }
         
+        # Pattern: "debug <file>" or "trace <file>"
+        if lower.startswith(("debug ", "trace ", "step ")):
+            target = lower.split(" ", 1)[1] if " " in lower else "src/main.py"
+            return {
+                "action": "debug",
+                "target": target,
+                "confidence": 0.9
+            }
+        
+        # Pattern: "profile <file>" or "benchmark <file>"
+        if lower.startswith(("profile ", "optimize ")):
+            target = lower.split(" ", 1)[1] if " " in lower else "src/"
+            return {
+                "action": "profile",
+                "target": target,
+                "confidence": 0.9
+            }
+        
+        # Pattern: "coverage <file>" or "test <file>"
+        if lower.startswith(("coverage ", "test coverage")):
+            target = lower.split(" ", 1)[1] if " " in lower else "src/"
+            return {
+                "action": "coverage",
+                "target": target,
+                "confidence": 0.9
+            }
+        
         # Fallback: treat as code generation
         return {
             "action": "generate",
@@ -255,8 +451,14 @@ class ChatEngine:
                 return self._handle_learn(request)
             elif action == "review":
                 return self._handle_review(request)
+            elif action == "debug":
+                return self._handle_debug(request)
+            elif action == "profile":
+                return self._handle_profile(request)
+            elif action == "coverage":
+                return self._handle_coverage(request)
             else:
-                return "❓ I didn't understand that. Try: 'write <code>', 'fix <file>', 'add <feature> to <file>', 'search <query>', 'review <file>', 'browse <path>', 'learn', or 'status'"
+                return "❓ I didn't understand that. Try: 'write <code>', 'fix <file>', 'review <file>', 'debug <file>', 'profile <file>', 'coverage <file>', 'search <query>', 'browse <path>', 'learn', or 'status'"
         except Exception as e:
             return f"⚠️ Error: {str(e)[:100]}"
     
