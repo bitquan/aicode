@@ -18,6 +18,10 @@
         "title": "aicode: Ask"
       },
       {
+        "command": "aicode.openPanel",
+        "title": "aicode: Open Chat Panel"
+      },
+      {
         "command": "aicode.status",
         "title": "aicode: Check API Status"
       }

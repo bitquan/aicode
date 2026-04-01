@@ -5,6 +5,7 @@ This extension is intentionally thin: it forwards prompts to your local aicode a
 ## Commands
 
 - `aicode: Ask` — prompts for a natural-language command and sends it to `POST /v1/aicode/command`
+- `aicode: Open Chat Panel` — opens a lightweight webview panel for chat-style interactions backed by `POST /v1/aicode/command`
 - `aicode: Check API Status` — verifies local server reachability via a status call
 
 ## Setup
