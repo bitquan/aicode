@@ -39,6 +39,11 @@ from src.tools.doc_generator import DocGenerator
 from src.tools.api_generator import APIGenerator
 from src.tools.dependency_resolver import DependencyResolver
 from src.tools.cost_optimizer import CostOptimizer
+from src.tools.team_knowledge_base import TeamKnowledgeBase
+from src.tools.audit_trail import AuditTrail
+from src.tools.role_permissions import RolePermissions
+from src.tools.custom_llm_support import CustomLLMSupport
+from src.tools.analytics_dashboard import AnalyticsDashboard
 
 
 class MarkdownRenderer:
@@ -141,6 +146,11 @@ class ChatEngine:
         self.api_generator = APIGenerator(str(self.workspace_root))
         self.dependency_resolver = DependencyResolver(str(self.workspace_root))
         self.cost_optimizer = CostOptimizer(str(self.workspace_root))
+        self.team_knowledge_base = TeamKnowledgeBase(str(self.workspace_root))
+        self.audit_trail = AuditTrail(str(self.workspace_root))
+        self.role_permissions = RolePermissions(str(self.workspace_root))
+        self.custom_llm_support = CustomLLMSupport(str(self.workspace_root))
+        self.analytics_dashboard = AnalyticsDashboard(str(self.workspace_root))
         self.interaction_log = []  # Track interactions for learning
         self._load_context()
     
@@ -418,7 +428,7 @@ class ChatEngine:
             }
         
         # Pattern: "review <file>" or "check <file>"
-        if lower.startswith(("review ", "check ", "audit ")):
+        if lower.startswith(("review ", "check ", "audit ")) and not lower.startswith(("audit trail", "audit log", "check role")):
             target = lower.split(" ", 1)[1] if " " in lower else "src/"
             return {
                 "action": "review",
@@ -574,6 +584,36 @@ class ChatEngine:
         if lower.startswith(("optimize cost", "cost optimize", "cost report", "spending")):
             return {"action": "cost_optimize", "confidence": 0.9}
 
+        # Pattern: "team kb ..." / "knowledge base ..."
+        if lower.startswith(("team kb", "knowledge base", "team knowledge")):
+            query = lower
+            for prefix in ("team kb", "knowledge base", "team knowledge"):
+                if query.startswith(prefix):
+                    query = query.replace(prefix, "", 1).strip()
+                    break
+            return {"action": "team_kb", "query": query, "confidence": 0.9}
+
+        # Pattern: "audit trail" / "audit log"
+        if lower.startswith(("audit trail", "audit log", "compliance audit")):
+            return {"action": "audit_trail", "confidence": 0.9}
+
+        # Pattern: "rbac" / "role permissions" / "check role"
+        if lower.startswith(("rbac", "role permissions", "check role")):
+            return {"action": "rbac", "confidence": 0.9}
+
+        # Pattern: "model route <task>" / "llm route <task>"
+        if lower.startswith(("model route", "llm route", "custom model")):
+            task = lower
+            for prefix in ("model route", "llm route", "custom model"):
+                if task.startswith(prefix):
+                    task = task.replace(prefix, "", 1).strip()
+                    break
+            return {"action": "custom_llm", "task": task or "general task", "confidence": 0.9}
+
+        # Pattern: "team analytics" / "analytics dashboard"
+        if lower.startswith(("team analytics", "analytics dashboard", "productivity metrics")):
+            return {"action": "team_analytics", "confidence": 0.9}
+
         # Fallback: treat as code generation
         return {
             "action": "generate",
@@ -642,8 +682,18 @@ class ChatEngine:
                 return self._handle_dep_resolve(request)
             elif action == "cost_optimize":
                 return self._handle_cost_optimize(request)
+            elif action == "team_kb":
+                return self._handle_team_kb(request)
+            elif action == "audit_trail":
+                return self._handle_audit_trail(request)
+            elif action == "rbac":
+                return self._handle_rbac(request)
+            elif action == "custom_llm":
+                return self._handle_custom_llm(request)
+            elif action == "team_analytics":
+                return self._handle_team_analytics(request)
             else:
-                return "❓ I didn't understand that. Try: 'write <code>', 'fix <file>', 'review <file>', 'debug <file>', 'profile <file>', 'coverage <file>', 'export knowledge', 'import knowledge <file>', 'prompt lab', 'build tool <name>', 'architecture', 'git status', 'generate pr', 'vscode setup', 'dashboard', 'collaborate <task>', 'route task <task>', 'agent memory <topic>', 'security scan <dir>', 'generate docs <file>', 'generate api <file>', 'resolve dependencies', 'optimize costs', 'search <query>', 'browse <path>', 'learn', or 'status'"
+                return "❓ I didn't understand that. Try: 'write <code>', 'fix <file>', 'review <file>', 'debug <file>', 'profile <file>', 'coverage <file>', 'export knowledge', 'import knowledge <file>', 'prompt lab', 'build tool <name>', 'architecture', 'git status', 'generate pr', 'vscode setup', 'dashboard', 'collaborate <task>', 'route task <task>', 'agent memory <topic>', 'security scan <dir>', 'generate docs <file>', 'generate api <file>', 'resolve dependencies', 'optimize costs', 'team kb <query>', 'audit trail', 'rbac', 'model route <task>', 'team analytics', 'search <query>', 'browse <path>', 'learn', or 'status'"
         except Exception as e:
             return f"⚠️ Error: {str(e)[:100]}"
     
@@ -1197,6 +1247,84 @@ Top Issues by File:
         for suggestion in result.get("suggestions", [])[:4]:
             lines.append(f"  • {suggestion}")
         return "\n".join(lines)
+
+    def _handle_team_kb(self, request: dict) -> str:
+        """Query team knowledge base for shared learnings."""
+        query = request.get("query", "").strip()
+        if query:
+            result = self.team_knowledge_base.search(query)
+            title = f"🧠 Team Knowledge Base Search: '{query}'"
+        else:
+            result = self.team_knowledge_base.recent(limit=5)
+            title = "🧠 Team Knowledge Base Recent Entries"
+        self._log_interaction(f"team kb {query}".strip(), "team_kb", True)
+        lines = [title, f"  • Matches: {result.get('count', 0)}"]
+        for entry in result.get("entries", [])[:5]:
+            lines.append(
+                f"  • {entry.get('topic', 'general')} ({entry.get('author', 'unknown')}): {entry.get('note', '')}"
+            )
+        if result.get("count", 0) == 0:
+            lines.append("  • No entries found yet. Add team notes to build shared memory.")
+        return "\n".join(lines)
+
+    def _handle_audit_trail(self, request: dict) -> str:
+        """Return audit and compliance summary."""
+        self.audit_trail.log_action(action="audit_view", actor="chat", target="summary", allowed=True)
+        summary = self.audit_trail.compliance_summary()
+        self._log_interaction("audit trail", "audit_trail", True)
+        lines = [
+            "📜 Audit Trail Summary",
+            f"  • Total events: {summary.get('total_events', 0)}",
+            f"  • Allowed: {summary.get('allowed_events', 0)}",
+            f"  • Denied: {summary.get('denied_events', 0)}",
+            f"  • Status: {summary.get('status', 'OK')}",
+        ]
+        for item in summary.get("top_actions", [])[:3]:
+            lines.append(f"  • {item.get('action')}: {item.get('count')} events")
+        return "\n".join(lines)
+
+    def _handle_rbac(self, request: dict) -> str:
+        """Check role-based action permission."""
+        role = request.get("role", "developer")
+        permission = request.get("permission", "search")
+        allowed = self.role_permissions.is_allowed(permission, role=role)
+        self._log_interaction(f"rbac {role} {permission}", "rbac", True)
+        verdict = "✅ Allowed" if allowed else "❌ Denied"
+        return (
+            "🛡️ Role-Based Permissions\n"
+            f"  • Role: {role}\n"
+            f"  • Action: {permission}\n"
+            f"  • Decision: {verdict}"
+        )
+
+    def _handle_custom_llm(self, request: dict) -> str:
+        """Route task to configured best-fit LLM model."""
+        task = request.get("task", "general task")
+        route = self.custom_llm_support.choose_model(task)
+        self._log_interaction(f"model route {task}", "custom_llm", True)
+        return (
+            "🧩 Custom LLM Routing\n"
+            f"  • Task type: {route.get('task_type')}\n"
+            f"  • Provider: {route.get('provider')}\n"
+            f"  • Model: {route.get('model')}\n"
+            f"  • Cost tier: {route.get('cost_tier')}"
+        )
+
+    def _handle_team_analytics(self, request: dict) -> str:
+        """Generate team analytics snapshot."""
+        report = self.analytics_dashboard.generate()
+        productivity = report.get("productivity", {})
+        quality = report.get("quality", {})
+        cost = report.get("cost", {})
+        self._log_interaction("team analytics", "team_analytics", True)
+        return (
+            "📊 Team Analytics Dashboard\n"
+            f"  • Audit events: {productivity.get('audit_events', 0)}\n"
+            f"  • Knowledge entries: {productivity.get('knowledge_entries', 0)}\n"
+            f"  • Compliance rate: {quality.get('compliance_rate', 1.0)}\n"
+            f"  • Denied actions: {quality.get('denied_actions', 0)}\n"
+            f"  • Total cost: ${cost.get('total_cost_usd', 0.0):.6f}"
+        )
 
 def run_chat_session(workspace_root: str = "."):
     """Run interactive chat session."""
