@@ -16,7 +16,7 @@ from src.tools.autofix import run_autofix_loop
 from src.tools.repo_index import build_file_index
 from src.tools.semantic_retriever import retrieve_relevant_snippets
 from src.tools.status_report import build_status_report
-from src.tools.project_memory import remember_note, search_notes
+from src.tools.project_memory import get_notes, remember_note, search_notes
 from src.tools.doc_fetcher import DocFetcher, enhance_with_docs
 from src.tools.self_builder import SelfBuilder
 from src.tools.code_reviewer import CodeReviewer, format_review_report
@@ -785,6 +785,7 @@ class ChatEngine:
     def _handle_generate(self, request: dict) -> str:
         """Generate code from prompt with streaming output and doc context."""
         instruction = request.get("instruction", "")
+        instruction = self._apply_user_preferences(instruction)
         use_streaming = request.get("stream", True)
         
         # Enhance with documentation context
@@ -835,6 +836,7 @@ Execution output:
         """Run autofix loop on target file with streaming feedback and doc context."""
         target = request.get("target", "src/main.py")
         instruction = request.get("instruction", "")
+        instruction = self._apply_user_preferences(instruction)
         use_streaming = request.get("stream", True)
         
         target_path = self.workspace_root / target
@@ -943,6 +945,38 @@ Execution output:
             "  • Stored in project memory + team knowledge base\n"
             "  • Use `team kb user_input` to recall saved lessons"
         )
+
+    def _apply_user_preferences(self, instruction: str) -> str:
+        """Append learned user preferences to execution prompts when available."""
+        notes = get_notes(str(self.workspace_root), key="lesson", limit=10)
+        lessons: list[str] = []
+        seen: set[str] = set()
+
+        # Prefer newest lessons first
+        for row in reversed(notes):
+            value = str(row.get("value", "")).strip()
+            if value and value not in seen:
+                seen.add(value)
+                lessons.append(value)
+
+        # Fall back to team KB entries tagged by user_input
+        if len(lessons) < 3:
+            kb_recent = self.team_knowledge_base.recent(limit=10).get("entries", [])
+            for entry in kb_recent:
+                if entry.get("topic") != "user_input":
+                    continue
+                value = str(entry.get("note", "")).strip()
+                if value and value not in seen:
+                    seen.add(value)
+                    lessons.append(value)
+                if len(lessons) >= 3:
+                    break
+
+        if not lessons:
+            return instruction
+
+        preference_block = "\n\nUser Preferences:\n" + "\n".join(f"- {item}" for item in lessons[:3])
+        return f"{instruction}{preference_block}" if instruction else preference_block.strip()
     
     def _handle_learn(self, request: dict) -> str:
         """Trigger self-improvement cycle based on learned interactions."""
