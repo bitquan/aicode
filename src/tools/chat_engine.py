@@ -34,6 +34,11 @@ from src.tools.dashboard import DashboardBuilder
 from src.tools.agent_memory import AgentMemoryStore
 from src.tools.agent_router import AgentRouter
 from src.tools.multi_agent import MultiAgentCoordinator
+from src.tools.security_scanner import SecurityScanner
+from src.tools.doc_generator import DocGenerator
+from src.tools.api_generator import APIGenerator
+from src.tools.dependency_resolver import DependencyResolver
+from src.tools.cost_optimizer import CostOptimizer
 
 
 class MarkdownRenderer:
@@ -131,6 +136,11 @@ class ChatEngine:
         self.agent_memory = AgentMemoryStore(str(self.workspace_root))
         self.agent_router = AgentRouter()
         self.multi_agent = MultiAgentCoordinator(str(self.workspace_root))
+        self.security_scanner = SecurityScanner(str(self.workspace_root))
+        self.doc_generator = DocGenerator(str(self.workspace_root))
+        self.api_generator = APIGenerator(str(self.workspace_root))
+        self.dependency_resolver = DependencyResolver(str(self.workspace_root))
+        self.cost_optimizer = CostOptimizer(str(self.workspace_root))
         self.interaction_log = []  # Track interactions for learning
         self._load_context()
     
@@ -425,6 +435,10 @@ class ChatEngine:
                 "confidence": 0.9
             }
         
+        # Pattern: "optimize costs" / "cost report" (must be before generic "optimize " check)
+        if lower.startswith(("optimize cost", "cost optimize", "cost report", "spending")):
+            return {"action": "cost_optimize", "confidence": 0.9}
+
         # Pattern: "profile <file>" or "benchmark <file>"
         if lower.startswith(("profile ", "optimize ")):
             target = lower.split(" ", 1)[1] if " " in lower else "src/"
@@ -536,7 +550,30 @@ class ChatEngine:
                 "topic": topic,
                 "confidence": 0.85,
             }
-        
+
+        # Pattern: "security scan <target>" / "vulnerability scan"
+        if lower.startswith(("security scan", "vulnerability scan", "scan security")):
+            target = lower.split(" ", 2)[-1] if lower.count(" ") >= 2 else "src/"
+            return {"action": "security_scan", "target": target, "confidence": 0.9}
+
+        # Pattern: "generate docs <file>" / "doc generate" / "docstrings"
+        if lower.startswith(("generate docs", "doc generate", "generate docstrings", "list undocumented")):
+            target = lower.split(" ", 2)[-1] if lower.count(" ") >= 2 else "src/"
+            return {"action": "doc_generate", "target": target, "confidence": 0.9}
+
+        # Pattern: "generate api <file>" / "api generate"
+        if lower.startswith(("generate api", "api generate", "create api")):
+            target = lower.split(" ", 2)[-1] if lower.count(" ") >= 2 else "src/"
+            return {"action": "api_generate", "target": target, "confidence": 0.9}
+
+        # Pattern: "resolve dependencies" / "check deps"
+        if lower.startswith(("resolve dep", "check dep", "dep resolve", "dependency")):
+            return {"action": "dep_resolve", "confidence": 0.9}
+
+        # Pattern: "optimize costs" / "cost report"
+        if lower.startswith(("optimize cost", "cost optimize", "cost report", "spending")):
+            return {"action": "cost_optimize", "confidence": 0.9}
+
         # Fallback: treat as code generation
         return {
             "action": "generate",
@@ -595,8 +632,18 @@ class ChatEngine:
                 return self._handle_agent_route(request)
             elif action == "agent_memory":
                 return self._handle_agent_memory(request)
+            elif action == "security_scan":
+                return self._handle_security_scan(request)
+            elif action == "doc_generate":
+                return self._handle_doc_generate(request)
+            elif action == "api_generate":
+                return self._handle_api_generate(request)
+            elif action == "dep_resolve":
+                return self._handle_dep_resolve(request)
+            elif action == "cost_optimize":
+                return self._handle_cost_optimize(request)
             else:
-                return "❓ I didn't understand that. Try: 'write <code>', 'fix <file>', 'review <file>', 'debug <file>', 'profile <file>', 'coverage <file>', 'export knowledge', 'import knowledge <file>', 'prompt lab', 'build tool <name>', 'architecture', 'git status', 'generate pr', 'vscode setup', 'dashboard', 'collaborate <task>', 'route task <task>', 'agent memory <topic>', 'search <query>', 'browse <path>', 'learn', or 'status'"
+                return "❓ I didn't understand that. Try: 'write <code>', 'fix <file>', 'review <file>', 'debug <file>', 'profile <file>', 'coverage <file>', 'export knowledge', 'import knowledge <file>', 'prompt lab', 'build tool <name>', 'architecture', 'git status', 'generate pr', 'vscode setup', 'dashboard', 'collaborate <task>', 'route task <task>', 'agent memory <topic>', 'security scan <dir>', 'generate docs <file>', 'generate api <file>', 'resolve dependencies', 'optimize costs', 'search <query>', 'browse <path>', 'learn', or 'status'"
         except Exception as e:
             return f"⚠️ Error: {str(e)[:100]}"
     
@@ -1064,6 +1111,91 @@ Top Issues by File:
         ]
         for entry in recalled.get('entries', [])[:5]:
             lines.append(f"  • {entry.get('agent')}: {entry.get('topic')} -> {entry.get('note')}")
+        return "\n".join(lines)
+
+    def _handle_security_scan(self, request: dict) -> str:
+        """Scan source files for security vulnerabilities."""
+        target = request.get("target", "src/")
+        result = self.security_scanner.scan_directory(target)
+        self._log_interaction(f"security scan {target}", "security_scan", True)
+        fixes = self.security_scanner.suggest_fixes(result.get("findings", []))
+        lines = [
+            "🔒 Security Scan Results",
+            f"  • Files scanned: {result.get('scanned_files', 0)}",
+            f"  • Total findings: {result.get('total_findings', 0)}",
+            f"  • Critical: {result.get('critical', 0)}  High: {result.get('high', 0)}"
+            f"  Medium: {result.get('medium', 0)}  Low: {result.get('low', 0)}",
+        ]
+        for fix in fixes[:5]:
+            lines.append(f"  • {fix}")
+        if not fixes:
+            lines.append("  ✅ No issues found!")
+        return "\n".join(lines)
+
+    def _handle_doc_generate(self, request: dict) -> str:
+        """Report undocumented code and generate docstring stubs."""
+        target = request.get("target", "src/")
+        result = self.doc_generator.list_undocumented(target)
+        self._log_interaction(f"generate docs {target}", "doc_generate", True)
+        lines = [
+            "📝 Documentation Report",
+            f"  • Missing docstrings: {result.get('total_missing_docstrings', 0)}",
+            f"  • Files affected: {result.get('files_affected', 0)}",
+        ]
+        for file_report in result.get("details", [])[:3]:
+            lines.append(f"  • {file_report['file']}: {file_report['undocumented']} missing")
+            for ds in file_report.get("docstrings", [])[:2]:
+                lines.append(f"    - {ds['type']} `{ds['name']}` (line {ds['line']})")
+        return "\n".join(lines)
+
+    def _handle_api_generate(self, request: dict) -> str:
+        """Generate FastAPI route stubs from a Python file."""
+        target = request.get("target", "src/")
+        result = self.api_generator.generate_from_file(target)
+        self._log_interaction(f"generate api {target}", "api_generate", True)
+        if "error" in result:
+            return f"⚠️ API Generator: {result['error']}"
+        lines = [
+            "⚡ API Routes Generated",
+            f"  • File: {result.get('file', target)}",
+            f"  • Routes: {result.get('route_count', 0)}",
+        ]
+        for route in result.get("routes", [])[:5]:
+            lines.append(f"  • {route['method']} {route['endpoint']}  →  {route['name']}()")
+        return "\n".join(lines)
+
+    def _handle_dep_resolve(self, request: dict) -> str:
+        """Analyse project dependencies for conflicts and upgrade paths."""
+        result = self.dependency_resolver.analyse()
+        self._log_interaction("resolve dependencies", "dep_resolve", True)
+        if "error" in result:
+            return f"⚠️ Dependency Resolver: {result['error']}"
+        lines = [
+            "📦 Dependency Analysis",
+            f"  • File: {result.get('file', 'unknown')}",
+            f"  • Packages: {result.get('total_packages', 0)}",
+            f"  • Health: {result.get('health', 'UNKNOWN')}",
+            f"  • Conflicts: {len(result.get('conflicts', []))}",
+            f"  • Upgrade suggestions: {len(result.get('upgrade_suggestions', []))}",
+        ]
+        for up in result.get("upgrade_suggestions", [])[:4]:
+            lines.append(f"  • {up['package']}: {up['current_spec']} → {up['suggested']}")
+        return "\n".join(lines)
+
+    def _handle_cost_optimize(self, request: dict) -> str:
+        """Analyse LLM/API spending and surface savings suggestions."""
+        result = self.cost_optimizer.analyse()
+        self._log_interaction("optimize costs", "cost_optimize", True)
+        lines = [
+            "💸 Cost Optimisation Report",
+            f"  • Status: {result.get('status')}",
+            f"  • Total cost: ${result.get('total_cost_usd', 0):.6f}",
+            f"  • Calls recorded: {result.get('total_calls', 0)}",
+            f"  • Projected daily: ${result.get('projected_daily_cost_usd', 0):.4f}"
+            f" (limit: ${result.get('budget_daily_limit_usd', 1.0):.2f})",
+        ]
+        for suggestion in result.get("suggestions", [])[:4]:
+            lines.append(f"  • {suggestion}")
         return "\n".join(lines)
 
 def run_chat_session(workspace_root: str = "."):
