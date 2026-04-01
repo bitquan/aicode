@@ -19,6 +19,7 @@ from src.tools.status_report import build_status_report
 from src.tools.project_memory import remember_note, search_notes
 from src.tools.doc_fetcher import DocFetcher, enhance_with_docs
 from src.tools.self_builder import SelfBuilder
+from src.tools.code_reviewer import CodeReviewer, format_review_report
 
 
 class MarkdownRenderer:
@@ -101,6 +102,7 @@ class ChatEngine:
         self.context = {}
         self.doc_fetcher = DocFetcher(str(self.workspace_root))
         self.self_builder = SelfBuilder(str(self.workspace_root))
+        self.code_reviewer = CodeReviewer(str(self.workspace_root))
         self.interaction_log = []  # Track interactions for learning
         self._load_context()
     
@@ -214,6 +216,15 @@ class ChatEngine:
                 "confidence": 0.9
             }
         
+        # Pattern: "review <file>" or "check <file>"
+        if lower.startswith(("review ", "check ", "audit ")):
+            target = lower.split(" ", 1)[1] if " " in lower else "src/"
+            return {
+                "action": "review",
+                "target": target,
+                "confidence": 0.9
+            }
+        
         # Fallback: treat as code generation
         return {
             "action": "generate",
@@ -242,8 +253,10 @@ class ChatEngine:
                 return self._handle_browse(request)
             elif action == "learn":
                 return self._handle_learn(request)
+            elif action == "review":
+                return self._handle_review(request)
             else:
-                return "❓ I didn't understand that. Try: 'write <code>', 'fix <file>', 'add <feature> to <file>', 'search <query>', 'browse <path>', 'learn', or 'status'"
+                return "❓ I didn't understand that. Try: 'write <code>', 'fix <file>', 'add <feature> to <file>', 'search <query>', 'review <file>', 'browse <path>', 'learn', or 'status'"
         except Exception as e:
             return f"⚠️ Error: {str(e)[:100]}"
     
@@ -497,8 +510,54 @@ Use 'show <file> 50-100' to see specific lines."""
 {chr(10).join(f"  {item}" for item in items[:30])}
 {f"... and {len(items)-30} more" if len(items) > 30 else ""}"""
         
-        return f"❌ Unknown error browsing {path}"
+        return f"❌ Unknown error browsing {path}"    
+    def _handle_review(self, request: dict) -> str:
+        """Review code quality, security, and best practices."""
+        target = request.get("target", "src/")
+        
+        target_path = self.workspace_root / target
+        
+        # If target is a directory, review all Python files in it
+        if target.endswith("/") or target_path.is_dir():
+            pattern = f"{target}**/*.py" if target.endswith("/") else f"{target}/**/*.py"
+            report = self.code_reviewer.review_codebase(include_patterns=[pattern])
+            
+            result = f"""📋 Code Review: {target}
+🔍 Analyzed {report['files_reviewed']} files
+📊 Average Quality Score: {report['codebase_score']:.1f}/100
 
+Top Issues by File:
+"""
+            
+            for filepath, file_report in list(report['reviews'].items())[:5]:
+                if 'error' not in file_report:
+                    score = file_report.get('quality_score', 0)
+                    issues = file_report.get('total_issues', 0)
+                    result += f"  • {filepath}: {score:.0f}/100 ({issues} issues)\n"
+            
+            if len(report['reviews']) > 5:
+                result += f"  ... and {len(report['reviews']) - 5} more files\n"
+            
+            self._log_interaction(f"review {target}", "review", True)
+            return result
+        
+        # Single file review
+        if not target_path.exists():
+            return f"❌ File not found: {target}"
+        
+        if target_path.is_file() and target.endswith(".py"):
+            print("\n📋 Reviewing code...\n", flush=True)
+            report = self.code_reviewer.review_file(target)
+            
+            if "error" in report:
+                return f"❌ {report['error']}"
+            
+            # Format and display report
+            formatted = format_review_report(report)
+            self._log_interaction(f"review {target}", "review", True)
+            return formatted
+        
+        return f"❌ Target must be a Python file or directory: {target}"
 
 def run_chat_session(workspace_root: str = "."):
     """Run interactive chat session."""
