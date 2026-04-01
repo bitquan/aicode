@@ -16,6 +16,8 @@ from src.tools.project_memory import remember_note
 from src.tools.prompt_optimizer import choose_prompt_strategy, record_prompt_outcome
 from src.tools.repair_planner import plan_repair_files
 from src.tools.repair_strategy import choose_repair_strategy
+from src.tools.semantic_retriever import retrieve_relevant_snippets
+from src.tools.context_packer import pack_context
 from src.tools.test_selector import select_test_command
 from src.tools.test_runner import run_test_command
 from src.tools.tool_policy import recommend_command, record_tool_outcome
@@ -277,6 +279,23 @@ def run_autofix_loop(
             ]
         )
 
+        retrieval_query = " ".join(
+            [
+                instruction,
+                failure.get("summary", ""),
+                failure.get("hint", ""),
+                strategy.get("instructions", ""),
+            ]
+        ).strip()
+        snippets = retrieve_relevant_snippets(
+            workspace_root=workspace_root,
+            query=retrieval_query,
+            limit=6,
+            prioritize_paths=planned_files,
+            failure_category=failure.get("category"),
+        )
+        context_bundle = pack_context(snippets, max_chars=2200)
+
         loop_instruction = (
             f"{instruction}\n\n"
             f"Repair attempt {attempt_index} failed.\n"
@@ -290,7 +309,8 @@ def run_autofix_loop(
             f"Confidence score: {confidence}\n"
             f"Test command used: {command_for_attempt}\n"
             f"Planned related files (for awareness): {', '.join(planned_files)}\n"
-            f"Fix memory hints:\n{memory_hints or 'none'}\n"
+            f"Fix memory hints:\n{memory_hints or 'none'}\n\n"
+            f"Relevant code context (reranked):\n{context_bundle or 'none'}\n\n"
             "Fix only this target file to satisfy failing checks.\n"
             "Keep the original goal intact and return only updated file content.\n\n"
             f"STDOUT:\n{test_result['stdout']}\n\n"
