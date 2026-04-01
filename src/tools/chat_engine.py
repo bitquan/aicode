@@ -49,6 +49,7 @@ from src.tools.framework_experts import FrameworkExperts
 from src.tools.architecture_diagram_understanding import ArchitectureDiagramUnderstanding
 from src.tools.data_schema_analyzer import DataSchemaAnalyzer
 from src.tools.diff_visualization import DiffVisualization
+from src.tools.prompt_taxonomy import classify_prompt_type
 
 
 class MarkdownRenderer:
@@ -415,6 +416,14 @@ class ChatEngine:
                 "confidence": 0.8
             }
 
+        # Pattern: repository understanding requests
+        prompt_class = classify_prompt_type(user_input)
+        if prompt_class.get("intent") == "repo_summary":
+            return {
+                "action": "repo_summary",
+                "confidence": 0.95,
+            }
+
         # Pattern: explicit user teaching input (must be before status keyword checks)
         if lower.startswith(("learn:", "teach:", "remember this", "note:")):
             lesson = user_input
@@ -777,6 +786,8 @@ class ChatEngine:
                 return self._handle_diff_visualize(request)
             elif action == "help_summary":
                 return self._handle_help_summary(request)
+            elif action == "repo_summary":
+                return self._handle_repo_summary(request)
             else:
                 return "❓ I didn't understand that. Try: 'write <code>', 'fix <file>', 'review <file>', 'debug <file>', 'profile <file>', 'coverage <file>', 'export knowledge', 'import knowledge <file>', 'prompt lab', 'build tool <name>', 'architecture', 'analyze diagram <text>', 'analyze schema', 'visualize diff', 'git status', 'generate pr', 'vscode setup', 'dashboard', 'collaborate <task>', 'route task <task>', 'agent memory <topic>', 'security scan <dir>', 'generate docs <file>', 'generate api <file>', 'resolve dependencies', 'optimize costs', 'team kb <query>', 'audit trail', 'rbac', 'model route <task>', 'team analytics', 'language summary <path>', 'framework expert <task>', 'search <query>', 'browse <path>', 'learn', or 'status'"
         except Exception as e:
@@ -1586,6 +1597,33 @@ Top Issues by File:
             "  • Architecture tools: analyze diagram, analyze schema, visualize diff\n"
             "Try: 'status', 'security scan src/', or 'analyze schema'."
         )
+
+    def _handle_repo_summary(self, request: dict) -> str:
+        """Return an on-demand repository summary for user understanding prompts."""
+        index = build_file_index(str(self.workspace_root))
+        total_files = len(index)
+
+        top_dirs: dict[str, int] = {}
+        for entry in index:
+            path = entry.get("path", "")
+            head = path.split("/", 1)[0] if "/" in path else path
+            if head:
+                top_dirs[head] = top_dirs.get(head, 0) + 1
+
+        ranked = sorted(top_dirs.items(), key=lambda kv: kv[1], reverse=True)[:6]
+        self._log_interaction("repo summary", "repo_summary", True)
+
+        lines = [
+            "📦 Repository Summary",
+            f"  • Workspace: {self.workspace_root.name}",
+            f"  • Indexed files: {total_files}",
+            "  • Top folders:",
+        ]
+        for folder, count in ranked:
+            lines.append(f"    - {folder}: {count} files")
+
+        lines.append("  • Core entrypoints: src/main.py, src/server.py, src/tools/chat_engine.py")
+        return "\n".join(lines)
 
 def run_chat_session(workspace_root: str = "."):
     """Run interactive chat session."""
