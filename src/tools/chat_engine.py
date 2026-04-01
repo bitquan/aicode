@@ -2,6 +2,7 @@
 Interactive chat interface with streaming, markdown, and file browsing.
 Understands natural language requests and routes to appropriate tools.
 Integrates online documentation and learns from interactions.
+Self-improves using specialized knowledge built from experience.
 """
 
 import json
@@ -17,6 +18,7 @@ from src.tools.semantic_retriever import retrieve_relevant_snippets
 from src.tools.status_report import build_status_report
 from src.tools.project_memory import remember_note, search_notes
 from src.tools.doc_fetcher import DocFetcher, enhance_with_docs
+from src.tools.self_builder import SelfBuilder
 
 
 class MarkdownRenderer:
@@ -98,6 +100,7 @@ class ChatEngine:
         self.agent = CodingAgent()
         self.context = {}
         self.doc_fetcher = DocFetcher(str(self.workspace_root))
+        self.self_builder = SelfBuilder(str(self.workspace_root))
         self.interaction_log = []  # Track interactions for learning
         self._load_context()
     
@@ -115,6 +118,10 @@ class ChatEngine:
             if packages:
                 self.doc_fetcher.index_library(packages)
                 self.context["packages"] = packages
+            
+            # Load learned knowledge
+            kb = self.self_builder.export_knowledge_base()
+            self.context["knowledge_base"] = kb
         except Exception:
             pass
     
@@ -200,6 +207,13 @@ class ChatEngine:
                 "confidence": 0.8
             }
         
+        # Pattern: "learn/improve/self-improve"
+        if any(w in lower for w in ["learn", "improve myself", "self-improve", "self improve", "build myself"]):
+            return {
+                "action": "learn",
+                "confidence": 0.9
+            }
+        
         # Fallback: treat as code generation
         return {
             "action": "generate",
@@ -226,8 +240,10 @@ class ChatEngine:
                 return self._handle_remember(request)
             elif action == "browse":
                 return self._handle_browse(request)
+            elif action == "learn":
+                return self._handle_learn(request)
             else:
-                return "❓ I didn't understand that. Try: 'write <code>', 'fix <file>', 'add <feature> to <file>', 'search <query>', 'browse <path>', or 'status'"
+                return "❓ I didn't understand that. Try: 'write <code>', 'fix <file>', 'add <feature> to <file>', 'search <query>', 'browse <path>', 'learn', or 'status'"
         except Exception as e:
             return f"⚠️ Error: {str(e)[:100]}"
     
@@ -370,6 +386,51 @@ Execution output:
         
         remember_note(str(self.workspace_root), key=key, value=value)
         return f"✅ Remembered: {key} = {value}"
+    
+    def _handle_learn(self, request: dict) -> str:
+        """Trigger self-improvement cycle based on learned interactions."""
+        print("\n📚 Analyzing interactions and building knowledge...\n", flush=True)
+        
+        # Learn from logged interactions
+        if self.interaction_log:
+            print(f"📊 Processing {len(self.interaction_log)} interactions...", flush=True)
+            self.self_builder.learn_from_logs(self.interaction_log)
+        
+        # Get improvement plan
+        plan = self.self_builder.generate_self_improvement_plan(self.interaction_log)
+        
+        # Display knowledge built
+        kb = self.self_builder.export_knowledge_base()
+        
+        result = f"""✨ Self-Improvement Complete!
+
+📈 Learning Results:
+  • Success Rate: {kb['metrics'].get('success_rate', 0):.1%}
+  • Total Interactions: {kb['metrics'].get('interaction_count', 0)}
+  • Solutions Cached: {len(kb['solutions'])}
+  • Strategies Learned: {len(kb['strategies'])}
+
+🎯 Improvement Plan:
+  • Current Success Rate: {plan['current_success_rate']:.1%}
+  • Target: {plan['target_success_rate']:.1%}
+  • Estimated Cycles Needed: {plan['estimated_cycles']}
+
+💡 Recommendations:
+"""
+        
+        suggestions = self.self_builder.get_improvement_suggestions()
+        for suggestion in suggestions:
+            result += f"  • {suggestion}\n"
+        
+        result += f"""
+✅ Knowledge Base:
+  • Solutions can guide future code generation
+  • Strategies optimize action selection
+  • Patterns prevent repeated failures
+  • Context-aware responses improve over time
+"""
+        
+        return result
     
     def _handle_browse(self, request: dict) -> str:
         """Browse files and directories."""
