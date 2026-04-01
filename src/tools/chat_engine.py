@@ -51,6 +51,7 @@ from src.tools.data_schema_analyzer import DataSchemaAnalyzer
 from src.tools.diff_visualization import DiffVisualization
 from src.tools.prompt_taxonomy import classify_prompt_type
 from src.tools.learned_preferences import add_preference, apply_correction, get_preferences, retrieve_preferences
+from src.tools.learning_metrics import build_learning_metrics
 
 
 class MarkdownRenderer:
@@ -505,7 +506,10 @@ class ChatEngine:
             }
 
         # Pattern: "learn/improve/self-improve"
-        if any(w in lower for w in ["learn", "improve myself", "self-improve", "self improve", "build myself"]):
+        if (
+            any(w in lower for w in ["learn", "improve myself", "self-improve", "self improve", "build myself"])
+            and not lower.startswith(("learning metrics", "baseline metrics", "metrics harness"))
+        ):
             return {
                 "action": "learn",
                 "confidence": 0.9
@@ -641,6 +645,13 @@ class ChatEngine:
             return {
                 "action": "dashboard",
                 "confidence": 0.85,
+            }
+
+        # Pattern: learning quality metrics harness
+        if lower.startswith(("learning metrics", "baseline metrics", "metrics harness")):
+            return {
+                "action": "learning_metrics",
+                "confidence": 0.9,
             }
 
         if lower.startswith(("collaborate ", "multi-agent ", "team up ")):
@@ -816,6 +827,8 @@ class ChatEngine:
                 return self._handle_vscode(request)
             elif action == "dashboard":
                 return self._handle_dashboard(request)
+            elif action == "learning_metrics":
+                return self._handle_learning_metrics(request)
             elif action == "multi_agent":
                 return self._handle_multi_agent(request)
             elif action == "agent_route":
@@ -1434,6 +1447,28 @@ Top Issues by File:
             f"  • Readiness: {payload.get('readiness')}\n"
             f"  • Benchmark: {payload.get('benchmark_score')}\n"
             f"  • Roadmap: {payload.get('roadmap_percent')}% ({payload.get('roadmap_done')}/{payload.get('roadmap_total')})"
+        )
+
+    def _handle_learning_metrics(self, request: dict) -> str:
+        """Show baseline learning quality metrics from local telemetry."""
+        metrics = build_learning_metrics(str(self.workspace_root), limit=1000)
+        routing = metrics.get("routing_accuracy", {})
+        preference = metrics.get("preference_hit_rate", {})
+        correction = metrics.get("correction_success_rate", {})
+        sizes = metrics.get("sample_sizes", {})
+
+        self._log_interaction("learning metrics", "learning_metrics", True)
+        return (
+            "📈 Learning Metrics Harness\n"
+            f"  • Prompt events: {sizes.get('prompt_events', 0)}\n"
+            f"  • Output traces: {sizes.get('output_traces', 0)}\n"
+            f"  • Correction events: {sizes.get('correction_events', 0)}\n"
+            f"  • Routing accuracy: {routing.get('accuracy_pct', 0.0)}% "
+            f"({routing.get('correct', 0)}/{routing.get('eligible', 0)})\n"
+            f"  • Preference hit rate: {preference.get('hit_rate_pct', 0.0)}% "
+            f"({preference.get('hits', 0)}/{preference.get('eligible', 0)})\n"
+            f"  • Correction success rate: {correction.get('success_rate_pct', 0.0)}% "
+            f"({correction.get('successful', 0)}/{correction.get('total', 0)})"
         )
 
     def _handle_multi_agent(self, request: dict) -> str:

@@ -32,6 +32,7 @@ def engine(tmp_path):
         ('generate docs src/main.py', 'doc_generate'),
         ('resolve dependencies', 'dep_resolve'),
         ('status', 'status'),
+        ('learning metrics', 'learning_metrics'),
     ],
 )
 def test_routing_buckets(engine, prompt, expected_action):
