@@ -50,9 +50,9 @@
 
 ## Layer 8: Vision & Context (Advanced Understanding)
 
-- [ ] 28. **Architecture Diagram Understanding** - "analyze this diagram", "show me the flow"
-- [ ] 29. **Data Schema Analyzer** - Understand and help design databases
-- [ ] 30. **Diff Visualization** - Show visual representations of code changes
+- [x] 28. **Architecture Diagram Understanding** - "analyze this diagram", "show me the flow"
+- [x] 29. **Data Schema Analyzer** - Understand and help design databases
+- [x] 30. **Diff Visualization** - Show visual representations of code changes
 
 ---
 
@@ -66,5 +66,5 @@
 
 **Progress**:
 - Total Items: 30
-- Completed: 27
+- Completed: 30
 - In Progress: 0

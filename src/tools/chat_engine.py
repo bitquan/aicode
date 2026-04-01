@@ -46,6 +46,9 @@ from src.tools.custom_llm_support import CustomLLMSupport
 from src.tools.analytics_dashboard import AnalyticsDashboard
 from src.tools.multi_language_support import MultiLanguageSupport
 from src.tools.framework_experts import FrameworkExperts
+from src.tools.architecture_diagram_understanding import ArchitectureDiagramUnderstanding
+from src.tools.data_schema_analyzer import DataSchemaAnalyzer
+from src.tools.diff_visualization import DiffVisualization
 
 
 class MarkdownRenderer:
@@ -155,6 +158,9 @@ class ChatEngine:
         self.analytics_dashboard = AnalyticsDashboard(str(self.workspace_root))
         self.multi_language_support = MultiLanguageSupport(str(self.workspace_root))
         self.framework_experts = FrameworkExperts(str(self.workspace_root))
+        self.architecture_diagram_understanding = ArchitectureDiagramUnderstanding(str(self.workspace_root))
+        self.data_schema_analyzer = DataSchemaAnalyzer(str(self.workspace_root))
+        self.diff_visualization = DiffVisualization(str(self.workspace_root))
         self.interaction_log = []  # Track interactions for learning
         self._load_context()
     
@@ -504,6 +510,29 @@ class ChatEngine:
                 "confidence": 0.9,
             }
 
+        # Pattern: "analyze diagram" / "diagram flow"
+        if lower.startswith(("analyze diagram", "diagram flow", "show diagram flow")):
+            diagram = user_input.split(" ", 2)[2] if len(user_input.split(" ")) >= 3 else ""
+            return {
+                "action": "diagram_analyze",
+                "diagram": diagram,
+                "confidence": 0.9,
+            }
+
+        # Pattern: "analyze schema" / "schema analyze" / "database schema"
+        if lower.startswith(("analyze schema", "schema analyze", "database schema")):
+            return {
+                "action": "schema_analyze",
+                "confidence": 0.9,
+            }
+
+        # Pattern: "visualize diff" / "diff visual"
+        if lower.startswith(("visualize diff", "diff visual", "show diff graph")):
+            return {
+                "action": "diff_visualize",
+                "confidence": 0.9,
+            }
+
         # Pattern: "architecture" / "analyze architecture"
         if lower.startswith(("architecture", "analyze architecture", "analyze design")):
             return {
@@ -717,8 +746,14 @@ class ChatEngine:
                 return self._handle_multi_language(request)
             elif action == "framework_expert":
                 return self._handle_framework_expert(request)
+            elif action == "diagram_analyze":
+                return self._handle_diagram_analyze(request)
+            elif action == "schema_analyze":
+                return self._handle_schema_analyze(request)
+            elif action == "diff_visualize":
+                return self._handle_diff_visualize(request)
             else:
-                return "❓ I didn't understand that. Try: 'write <code>', 'fix <file>', 'review <file>', 'debug <file>', 'profile <file>', 'coverage <file>', 'export knowledge', 'import knowledge <file>', 'prompt lab', 'build tool <name>', 'architecture', 'git status', 'generate pr', 'vscode setup', 'dashboard', 'collaborate <task>', 'route task <task>', 'agent memory <topic>', 'security scan <dir>', 'generate docs <file>', 'generate api <file>', 'resolve dependencies', 'optimize costs', 'team kb <query>', 'audit trail', 'rbac', 'model route <task>', 'team analytics', 'language summary <path>', 'framework expert <task>', 'search <query>', 'browse <path>', 'learn', or 'status'"
+                return "❓ I didn't understand that. Try: 'write <code>', 'fix <file>', 'review <file>', 'debug <file>', 'profile <file>', 'coverage <file>', 'export knowledge', 'import knowledge <file>', 'prompt lab', 'build tool <name>', 'architecture', 'analyze diagram <text>', 'analyze schema', 'visualize diff', 'git status', 'generate pr', 'vscode setup', 'dashboard', 'collaborate <task>', 'route task <task>', 'agent memory <topic>', 'security scan <dir>', 'generate docs <file>', 'generate api <file>', 'resolve dependencies', 'optimize costs', 'team kb <query>', 'audit trail', 'rbac', 'model route <task>', 'team analytics', 'language summary <path>', 'framework expert <task>', 'search <query>', 'browse <path>', 'learn', or 'status'"
         except Exception as e:
             return f"⚠️ Error: {str(e)[:100]}"
     
@@ -1387,6 +1422,76 @@ Top Issues by File:
         ]
         for tip in advice.get("tips", [])[:3]:
             lines.append(f"  • {tip}")
+        return "\n".join(lines)
+
+    def _handle_diagram_analyze(self, request: dict) -> str:
+        """Analyze architecture diagram text or file for flow understanding."""
+        diagram = request.get("diagram", "").strip()
+        file_path = request.get("file", "")
+        if file_path:
+            result = self.architecture_diagram_understanding.analyze_file(file_path)
+        else:
+            result = self.architecture_diagram_understanding.analyze_text(diagram)
+        self._log_interaction("analyze diagram", "diagram_analyze", "error" not in result)
+        if "error" in result:
+            return f"⚠️ Diagram Analyzer: {result['error']}"
+
+        lines = [
+            "🗺️ Architecture Diagram Analysis",
+            f"  • Nodes: {result.get('node_count', 0)}",
+            f"  • Connections: {result.get('edge_count', 0)}",
+            f"  • Entry points: {', '.join(result.get('entry_points', [])) or 'none'}",
+            f"  • Terminal nodes: {', '.join(result.get('terminal_nodes', [])) or 'none'}",
+        ]
+        for edge in result.get("edges", [])[:5]:
+            lines.append(f"  • {edge['from']} → {edge['to']}")
+        return "\n".join(lines)
+
+    def _handle_schema_analyze(self, request: dict) -> str:
+        """Analyze data schema DDL for structure and relationship insights."""
+        schema = request.get("schema", "").strip()
+        file_path = request.get("file", "")
+        if file_path:
+            result = self.data_schema_analyzer.analyze_file(file_path)
+        else:
+            result = self.data_schema_analyzer.analyze_sql(schema)
+        self._log_interaction("analyze schema", "schema_analyze", "error" not in result)
+        if "error" in result:
+            return f"⚠️ Schema Analyzer: {result['error']}"
+
+        lines = [
+            "🧱 Data Schema Analysis",
+            f"  • Tables: {result.get('table_count', 0)}",
+            f"  • Relationships: {result.get('relationship_count', 0)}",
+        ]
+        for table in result.get("tables", [])[:4]:
+            lines.append(f"  • {table.get('table')}: {table.get('column_count', 0)} columns")
+        for rec in result.get("recommendations", [])[:3]:
+            lines.append(f"  • Suggestion: {rec}")
+        return "\n".join(lines)
+
+    def _handle_diff_visualize(self, request: dict) -> str:
+        """Generate a compact visual summary of a diff."""
+        diff_text = request.get("diff", "")
+        diff_file = request.get("file", "")
+        if diff_file:
+            result = self.diff_visualization.summarize_file(diff_file)
+        else:
+            result = self.diff_visualization.summarize_diff(diff_text)
+        self._log_interaction("visualize diff", "diff_visualize", "error" not in result)
+        if "error" in result:
+            return f"⚠️ Diff Visualization: {result['error']}"
+
+        lines = [
+            "🧩 Diff Visualization",
+            f"  • Files changed: {result.get('files_changed', 0)}",
+            f"  • Added lines: {result.get('total_added', 0)}",
+            f"  • Removed lines: {result.get('total_removed', 0)}",
+        ]
+        for item in result.get("files", [])[:5]:
+            lines.append(
+                f"  • {item.get('file')}: +{item.get('added', 0)} -{item.get('removed', 0)} {item.get('visual', '')}"
+            )
         return "\n".join(lines)
 
 def run_chat_session(workspace_root: str = "."):
