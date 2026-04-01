@@ -1,12 +1,13 @@
 """
-Interactive chat interface for the AI coding assistant.
+Interactive chat interface with streaming, markdown, and file browsing.
 Understands natural language requests and routes to appropriate tools.
 """
 
 import json
 import sys
+import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Generator
 
 from src.agents.coding_agent import CodingAgent
 from src.tools.autofix import run_autofix_loop
@@ -14,6 +15,77 @@ from src.tools.repo_index import build_file_index
 from src.tools.semantic_retriever import retrieve_relevant_snippets
 from src.tools.status_report import build_status_report
 from src.tools.project_memory import remember_note, search_notes
+
+
+class MarkdownRenderer:
+    """Render markdown in terminal with colors and formatting."""
+    
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+    CYAN = "\033[36m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    BLUE = "\033[34m"
+    MAGENTA = "\033[35m"
+    
+    @classmethod
+    def render(cls, text: str) -> str:
+        """Render markdown to terminal output."""
+        lines = text.split("\n")
+        rendered = []
+        in_code = False
+        
+        for line in lines:
+            # Code blocks
+            if line.strip().startswith("```"):
+                in_code = not in_code
+                if in_code:
+                    rendered.append(f"\n{cls.DIM}─────────────────────{cls.RESET}")
+                else:
+                    rendered.append(f"{cls.DIM}─────────────────────{cls.RESET}\n")
+                continue
+            
+            if in_code:
+                rendered.append(f"{cls.CYAN}{line}{cls.RESET}")
+            # Headers
+            elif line.startswith("# "):
+                rendered.append(f"{cls.BOLD}{cls.MAGENTA}{line[2:]}{cls.RESET}")
+            elif line.startswith("## "):
+                rendered.append(f"{cls.BOLD}{cls.BLUE}{line[3:]}{cls.RESET}")
+            elif line.startswith("### "):
+                rendered.append(f"{cls.BOLD}{line[4:]}{cls.RESET}")
+            # Bold/Italic
+            elif "**" in line:
+                rendered.append(f"{cls.BOLD}{line.replace('**', '')}{cls.RESET}")
+            # Bullet points
+            elif line.startswith("- "):
+                rendered.append(f"{cls.GREEN}•{cls.RESET} {line[2:]}")
+            elif line.startswith("  - "):
+                rendered.append(f"{cls.GREEN}  ◦{cls.RESET} {line[4:]}")
+            # Success/Warning/Error indicators
+            elif "✅" in line or "✓" in line:
+                rendered.append(f"{cls.GREEN}{line}{cls.RESET}")
+            elif "⚠️" in line or "❌" in line:
+                rendered.append(f"{cls.YELLOW}{line}{cls.RESET}")
+            else:
+                rendered.append(line)
+        
+        return "\n".join(rendered)
+    
+    @classmethod
+    def stream(cls, chunks: Generator[str, None, None]) -> None:
+        """Stream rendered output chunk by chunk."""
+        buffer = ""
+        for chunk in chunks:
+            buffer += chunk
+            if "\n" in buffer:
+                lines = buffer.split("\n")
+                for line in lines[:-1]:
+                    print(cls.render(line), flush=True)
+                buffer = lines[-1]
+        if buffer:
+            print(cls.render(buffer), flush=True)
 
 
 class ChatEngine:
@@ -37,6 +109,16 @@ class ChatEngine:
     def parse_request(self, user_input: str) -> dict:
         """Parse natural language request and determine action."""
         lower = user_input.lower().strip()
+        
+        # File browsing: "browse <path>", "ls <path>", "show <path>"
+        if any(lower.startswith(cmd) for cmd in ["browse ", "ls ", "show ", "open "]):
+            parts = lower.split(" ", 1)
+            path = parts[1] if len(parts) > 1 else "."
+            return {
+                "action": "browse",
+                "path": path,
+                "confidence": 0.95
+            }
         
         # Patterns: "add <feature> to <file>"
         if lower.startswith("add "):
@@ -119,8 +201,10 @@ class ChatEngine:
                 return self._handle_status(request)
             elif action == "remember":
                 return self._handle_remember(request)
+            elif action == "browse":
+                return self._handle_browse(request)
             else:
-                return "❓ I didn't understand that. Try: 'write <code>', 'fix <file>', 'add <feature> to <file>', 'search <query>', or 'status'"
+                return "❓ I didn't understand that. Try: 'write <code>', 'fix <file>', 'add <feature> to <file>', 'search <query>', 'browse <path>', or 'status'"
         except Exception as e:
             return f"⚠️ Error: {str(e)[:100]}"
     
@@ -209,6 +293,73 @@ class ChatEngine:
         
         remember_note(str(self.workspace_root), key=key, value=value)
         return f"✅ Remembered: {key} = {value}"
+    
+    def _handle_browse(self, request: dict) -> str:
+        """Browse files and directories."""
+        path = request.get("path", ".")
+        target = self.workspace_root / path if path != "." else self.workspace_root
+        
+        # Normalize and validate path (prevent directory traversal)
+        try:
+            target = target.resolve()
+            if not str(target).startswith(str(self.workspace_root.resolve())):
+                return f"❌ Access denied: outside workspace"
+        except Exception:
+            return f"❌ Invalid path: {path}"
+        
+        if not target.exists():
+            return f"❌ Not found: {path}"
+        
+        # Show file contents if it's a file
+        if target.is_file():
+            try:
+                with open(target, 'r') as f:
+                    content = f.read()
+                
+                # Show with line numbers for reasonable-sized files
+                lines = content.split('\n')
+                if len(lines) <= 100:
+                    numbered = "\n".join(f"{i+1:3d} | {line}" for i, line in enumerate(lines))
+                    return f"""📄 {target.name} ({len(lines)} lines):
+```
+{numbered[:2000]}
+```"""
+                else:
+                    return f"""📄 {target.name} ({len(lines)} lines) - Too long to display.
+First 50 lines:
+```
+{chr(10).join(f"{i+1:3d} | {line}" for i, line in enumerate(lines[:50]))}
+```
+Use 'show <file> 50-100' to see specific lines."""
+            except Exception as e:
+                return f"❌ Can't read {path}: {str(e)[:50]}"
+        
+        # Show directory contents
+        if target.is_dir():
+            items = []
+            try:
+                for item in sorted(target.iterdir()):
+                    if item.name.startswith('.'):
+                        continue  # Skip hidden files
+                    
+                    rel_path = item.relative_to(self.workspace_root)
+                    if item.is_dir():
+                        items.append(f"📁 {rel_path}/")
+                    else:
+                        size = item.stat().st_size
+                        size_str = f"{size/1024:.1f}KB" if size > 1024 else f"{size}B"
+                        items.append(f"📄 {rel_path} ({size_str})")
+            except PermissionError:
+                return f"❌ Permission denied: {path}"
+            
+            if not items:
+                return f"📁 {path}/ (empty)"
+            
+            return f"""📁 {path}/:
+{chr(10).join(f"  {item}" for item in items[:30])}
+{f"... and {len(items)-30} more" if len(items) > 30 else ""}"""
+        
+        return f"❌ Unknown error browsing {path}"
 
 
 def run_chat_session(workspace_root: str = "."):
