@@ -4,7 +4,7 @@ Tests for Test Coverage Analyzer
 
 import pytest
 from pathlib import Path
-from src.tools.coverage_analyzer import TestCoverageAnalyzer, CoverageAnalysis, format_coverage_output
+from src.tools.coverage_analyzer import TestCoverageAnalyzer as CoverageAnalyzerTool, CoverageAnalysis, format_coverage_output
 
 
 class TestCoverageAnalysis:
@@ -63,7 +63,7 @@ class Calculator:
             return None
         return a / b
 ''')
-        return TestCoverageAnalyzer(str(tmp_path))
+        return CoverageAnalyzerTool(str(tmp_path))
     
     def test_analyze_file(self, analyzer):
         """Test file coverage analysis."""
@@ -226,7 +226,7 @@ def _private_func():
 def __dunder_func():
     pass
 """)
-        analyzer = TestCoverageAnalyzer(str(tmp_path))
+        analyzer = CoverageAnalyzerTool(str(tmp_path))
         result = analyzer.suggest_missing_tests("funcs.py")
         
         suggestions = {s["function"]: s["is_private"] for s in result["suggestions"]}
@@ -244,7 +244,7 @@ def with_doc():
 def without_doc():
     pass
 ''')
-        analyzer = TestCoverageAnalyzer(str(tmp_path))
+        analyzer = CoverageAnalyzerTool(str(tmp_path))
         result = analyzer.suggest_missing_tests("docs.py")
         
         suggestions = {s["function"]: s["has_docstring"] for s in result["suggestions"]}

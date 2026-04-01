@@ -86,13 +86,17 @@ class PythonDebugger:
     def start_debug_session(self, filepath: str, entry_point: Optional[str] = None) -> Dict:
         """Start a new debug session."""
         try:
-            session = DebugSession(filepath, str(self.workspace_root))
+            file_path = Path(filepath)
+            if not file_path.is_absolute():
+                file_path = self.workspace_root / file_path
+
+            session = DebugSession(str(file_path), str(self.workspace_root))
             session_id = filepath
             self.sessions[session_id] = session
             self.current_session = session_id
             
             # Read the file to show context
-            with open(filepath) as f:
+            with open(file_path) as f:
                 lines = f.readlines()
             
             return {

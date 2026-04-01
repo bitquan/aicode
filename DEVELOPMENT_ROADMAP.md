@@ -2,8 +2,6 @@
 
 ## Layer 1: Core Enhancements (Foundational)
 
-- [ ] 1. **Interactive Debugger** - Step through code execution with chat commands ("debug main.py", "breakpoint line 42")
-- [x] 2. **Code Review Assistant** - Analyze code quality, complexity, security issues; suggest improvements
 - [x] 1. **Interactive Debugger** - Step through code execution with chat commands ("debug main.py", "breakpoint line 42")
 - [x] 2. **Code Review Assistant** - Analyze code quality, complexity, security issues; suggest improvements
 - [x] 3. **Performance Profiler** - Identify bottlenecks and help optimize ("profile slow function", "find memory leaks")
@@ -11,10 +9,10 @@
 
 ## Layer 2: Knowledge & Learning (Improve the Knowledge Base)
 
-- [ ] 5. **Knowledge Export/Import** - Share learned knowledge bases between projects or team members
-- [ ] 6. **Prompt Engineering Lab** - Track which prompts work best, auto-optimize based on success metrics
-- [ ] 7. **Custom Tool Builder** - Chat creates specialized tools for your project ("make a validator for users", "create a caching decorator")
-- [ ] 8. **Architecture Analyzer** - Chat understands system design and suggests improvements
+- [x] 5. **Knowledge Export/Import** - Share learned knowledge bases between projects or team members
+- [x] 6. **Prompt Engineering Lab** - Track which prompts work best, auto-optimize based on success metrics
+- [x] 7. **Custom Tool Builder** - Chat creates specialized tools for your project ("make a validator for users", "create a caching decorator")
+- [x] 8. **Architecture Analyzer** - Chat understands system design and suggests improvements
 
 ## Layer 3: Integration & APIs (Connect to External Systems)
 

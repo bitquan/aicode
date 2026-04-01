@@ -23,6 +23,10 @@ from src.tools.code_reviewer import CodeReviewer, format_review_report
 from src.tools.debugger import PythonDebugger, format_debug_output
 from src.tools.profiler import CodeProfiler, format_profile_output
 from src.tools.coverage_analyzer import TestCoverageAnalyzer, format_coverage_output
+from src.tools.knowledge_transfer import KnowledgeTransfer
+from src.tools.prompt_lab import PromptLab
+from src.tools.tool_builder import ToolBuilder
+from src.tools.architecture_analyzer import ArchitectureAnalyzer
 
 
 class MarkdownRenderer:
@@ -109,6 +113,10 @@ class ChatEngine:
         self.debugger = PythonDebugger(str(self.workspace_root))
         self.profiler = CodeProfiler(str(self.workspace_root))
         self.coverage_analyzer = TestCoverageAnalyzer(str(self.workspace_root))
+        self.knowledge_transfer = KnowledgeTransfer(str(self.workspace_root))
+        self.prompt_lab = PromptLab(str(self.workspace_root))
+        self.tool_builder = ToolBuilder(str(self.workspace_root))
+        self.architecture_analyzer = ArchitectureAnalyzer(str(self.workspace_root))
         self.interaction_log = []  # Track interactions for learning
         self._load_context()
     
@@ -420,6 +428,46 @@ class ChatEngine:
                 "target": target,
                 "confidence": 0.9
             }
+
+        # Pattern: "export knowledge" / "import knowledge <file>"
+        if lower.startswith("export knowledge"):
+            return {
+                "action": "knowledge_transfer",
+                "mode": "export",
+                "confidence": 0.9,
+            }
+
+        if lower.startswith("import knowledge"):
+            bundle = lower.split(" ", 2)[2] if len(lower.split(" ")) >= 3 else "knowledge_export.json"
+            return {
+                "action": "knowledge_transfer",
+                "mode": "import",
+                "bundle": bundle,
+                "confidence": 0.9,
+            }
+
+        # Pattern: "prompt lab" / "prompt stats"
+        if lower.startswith(("prompt lab", "prompt stats", "prompt strategy")):
+            return {
+                "action": "prompt_lab",
+                "confidence": 0.85,
+            }
+
+        # Pattern: "build tool <name>"
+        if lower.startswith("build tool "):
+            tool_name = lower.replace("build tool ", "", 1).strip()
+            return {
+                "action": "tool_builder",
+                "name": tool_name,
+                "confidence": 0.9,
+            }
+
+        # Pattern: "architecture" / "analyze architecture"
+        if lower.startswith(("architecture", "analyze architecture", "analyze design")):
+            return {
+                "action": "architecture",
+                "confidence": 0.85,
+            }
         
         # Fallback: treat as code generation
         return {
@@ -457,8 +505,16 @@ class ChatEngine:
                 return self._handle_profile(request)
             elif action == "coverage":
                 return self._handle_coverage(request)
+            elif action == "knowledge_transfer":
+                return self._handle_knowledge_transfer(request)
+            elif action == "prompt_lab":
+                return self._handle_prompt_lab(request)
+            elif action == "tool_builder":
+                return self._handle_tool_builder(request)
+            elif action == "architecture":
+                return self._handle_architecture(request)
             else:
-                return "❓ I didn't understand that. Try: 'write <code>', 'fix <file>', 'review <file>', 'debug <file>', 'profile <file>', 'coverage <file>', 'search <query>', 'browse <path>', 'learn', or 'status'"
+                return "❓ I didn't understand that. Try: 'write <code>', 'fix <file>', 'review <file>', 'debug <file>', 'profile <file>', 'coverage <file>', 'export knowledge', 'import knowledge <file>', 'prompt lab', 'build tool <name>', 'architecture', 'search <query>', 'browse <path>', 'learn', or 'status'"
         except Exception as e:
             return f"⚠️ Error: {str(e)[:100]}"
     
@@ -760,6 +816,63 @@ Top Issues by File:
             return formatted
         
         return f"❌ Target must be a Python file or directory: {target}"
+
+    def _handle_knowledge_transfer(self, request: dict) -> str:
+        """Export/import knowledge base for sharing."""
+        mode = request.get("mode", "export")
+        if mode == "export":
+            result = self.knowledge_transfer.export_bundle("knowledge_export.json")
+            self._log_interaction("export knowledge", "knowledge_transfer", True)
+            return f"✅ Knowledge exported to {result.get('path')} ({result.get('file_count')} files)"
+
+        bundle = request.get("bundle", "knowledge_export.json")
+        result = self.knowledge_transfer.import_bundle(bundle)
+        if "error" in result:
+            self._log_interaction(f"import knowledge {bundle}", "knowledge_transfer", False)
+            return f"❌ {result['error']}"
+        self._log_interaction(f"import knowledge {bundle}", "knowledge_transfer", True)
+        return f"✅ Knowledge imported from {result.get('bundle')} ({result.get('imported_files')} files)"
+
+    def _handle_prompt_lab(self, request: dict) -> str:
+        """Show prompt strategy metrics and recommendation."""
+        summary = self.prompt_lab.summarize()
+        recommendation = self.prompt_lab.recommend_strategy("general coding task")
+
+        lines = [
+            "🧪 Prompt Lab",
+            f"  • Total Runs: {summary.get('total_runs', 0)}",
+            f"  • Overall Success: {summary.get('overall_success_rate', 0):.1%}",
+            f"  • Recommended Strategy: {recommendation.get('strategy')} ({recommendation.get('reason')})",
+        ]
+        self._log_interaction("prompt lab", "prompt_lab", True)
+        return "\n".join(lines)
+
+    def _handle_tool_builder(self, request: dict) -> str:
+        """Create a custom tool scaffold."""
+        name = request.get("name", "custom_tool")
+        result = self.tool_builder.create_tool(name, f"Generated tool: {name}")
+        if "error" in result:
+            self._log_interaction(f"build tool {name}", "tool_builder", False)
+            return f"❌ {result['error']}"
+
+        self._log_interaction(f"build tool {name}", "tool_builder", True)
+        return f"✅ Tool created: {result['tool']} with test {result['test']}"
+
+    def _handle_architecture(self, request: dict) -> str:
+        """Analyze codebase architecture and recommendations."""
+        result = self.architecture_analyzer.analyze("src")
+        if "error" in result:
+            self._log_interaction("architecture", "architecture", False)
+            return f"❌ {result['error']}"
+
+        recommendations = result.get("recommendations", [])
+        self._log_interaction("architecture", "architecture", True)
+        return f"""🏗️ Architecture Analysis
+  • Python Files: {result.get('python_files', 0)}
+  • Modules Indexed: {len(result.get('modules', []))}
+  • Recommendations: {len(recommendations)}
+
+{chr(10).join(f"  • {item}" for item in recommendations[:5])}"""
 
 def run_chat_session(workspace_root: str = "."):
     """Run interactive chat session."""
