@@ -4,10 +4,19 @@ from pathlib import Path
 
 from src.agents.coding_agent import CodingAgent
 from src.tools.autofix import run_autofix_loop
+from src.tools.context_packer import pack_context
+from src.tools.patch_guard import validate_unified_diff
+from src.tools.read_policy import ReadFirstPolicy, check_read_first
+from src.tools.repo_index import build_file_index
+from src.tools.semantic_retriever import retrieve_relevant_snippets
+from src.tools.symbol_index import build_symbol_index
 from src.tools.fix_memory import retrieve_similar_fixes
 from src.tools.logger import load_audit_events
 from src.tools.patch_applier import preview_diff, apply_file_edit
 from src.ui.terminal_ui import run_terminal_ui
+
+
+READ_POLICY = ReadFirstPolicy()
 
 
 def _print_usage():
@@ -21,6 +30,12 @@ def _print_usage():
     print("  python -m src.main audit <trace_id>")
     print("  python -m src.main memory <target_path> <failure_category>")
     print("  python -m src.main blocker <trace_id>")
+    print("  python -m src.main index")
+    print("  python -m src.main symbols")
+    print("  python -m src.main search <query>")
+    print("  python -m src.main context <query> [--chars N]")
+    print("  python -m src.main read <relative_path>")
+    print("  python -m src.main validate-diff <relative_path>")
 
 def main():
     agent = CodingAgent()
@@ -73,6 +88,61 @@ def main():
             print("Blocker report not found.")
             return
         print(json.loads(path.read_text(encoding="utf-8")))
+        return
+
+    if args and args[0] == "index":
+        print(build_file_index(str(Path.cwd())))
+        return
+
+    if args and args[0] == "symbols":
+        print(build_symbol_index(str(Path.cwd())))
+        return
+
+    if args and args[0] == "search":
+        if len(args) < 2:
+            print("Usage: python -m src.main search <query>")
+            return
+        print(retrieve_relevant_snippets(str(Path.cwd()), " ".join(args[1:]), limit=5))
+        return
+
+    if args and args[0] == "context":
+        if len(args) < 2:
+            print("Usage: python -m src.main context <query> [--chars N]")
+            return
+        clean = args[1:]
+        max_chars = 4000
+        if "--chars" in clean:
+            idx = clean.index("--chars")
+            if idx + 1 < len(clean):
+                max_chars = int(clean[idx + 1])
+                del clean[idx:idx + 2]
+        snippets = retrieve_relevant_snippets(str(Path.cwd()), " ".join(clean), limit=8)
+        print(pack_context(snippets, max_chars=max_chars))
+        return
+
+    if args and args[0] == "read":
+        if len(args) != 2:
+            print("Usage: python -m src.main read <relative_path>")
+            return
+        relative_path = args[1]
+        path = Path.cwd() / relative_path
+        if not path.exists():
+            print("Path not found")
+            return
+        READ_POLICY.record_read(relative_path)
+        print(path.read_text(encoding="utf-8"))
+        return
+
+    if args and args[0] == "validate-diff":
+        if len(args) != 2:
+            print("Usage: python -m src.main validate-diff <relative_path>")
+            return
+        relative_path = args[1]
+        check_read_first(READ_POLICY, relative_path)
+        path = Path.cwd() / relative_path
+        content = path.read_text(encoding="utf-8")
+        diff = preview_diff(content, content, relative_path)
+        print(validate_unified_diff(diff))
         return
 
     if args and args[0] == "autofix":

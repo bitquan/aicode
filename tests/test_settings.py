@@ -1,4 +1,5 @@
 from src.config.settings import load_settings
+from src.tools.test_runner import run_test_command
 
 
 def test_load_settings_default_profile(monkeypatch):
@@ -15,3 +16,9 @@ def test_load_settings_env_override(monkeypatch):
     settings = load_settings()
     assert settings.profile == "dev"
     assert settings.timeout == 33
+
+
+def test_run_test_command_blocks_disallowed_binary():
+    result = run_test_command("bash -lc 'echo hi'")
+    assert result["success"] is False
+    assert "Blocked command" in result["stderr"]

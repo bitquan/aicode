@@ -1,6 +1,9 @@
 from pathlib import Path
 import difflib
 
+from src.tools.patch_guard import validate_unified_diff
+from src.tools.snapshot_manager import create_snapshot
+
 
 def _resolve_target(workspace_root, relative_path):
     root = Path(workspace_root).resolve()
@@ -24,10 +27,17 @@ def apply_file_edit(workspace_root, relative_path, new_content):
     target = _resolve_target(workspace_root, relative_path)
     existed_before = target.exists()
     old_content = target.read_text(encoding="utf-8") if existed_before else ""
+    diff = preview_diff(old_content, new_content, relative_path)
+    validation = validate_unified_diff(diff)
+    if not validation["valid"]:
+        raise ValueError(f"Patch validation failed: {validation['reason']}")
+
+    snapshot = create_snapshot(workspace_root, relative_path) if existed_before else None
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(new_content, encoding="utf-8")
     return {
         "path": str(target),
         "created": not existed_before,
-        "diff": preview_diff(old_content, new_content, relative_path),
+        "diff": diff,
+        "snapshot": snapshot,
     }
