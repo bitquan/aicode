@@ -359,6 +359,30 @@ class ChatEngine:
             "doc_context": doc_context,
             "timestamp": str(Path.home() / ".dev_timestamp")
         })
+
+    def _looks_like_code_request(self, lower: str) -> bool:
+        """Heuristic check for direct coding intent when prompt is otherwise unmatched."""
+        code_signals = (
+            "function",
+            "class",
+            "method",
+            "implement",
+            "refactor",
+            "bug",
+            "error",
+            "exception",
+            "code",
+            "python",
+            "javascript",
+            "typescript",
+            "sql",
+            "api",
+            "endpoint",
+            "unit test",
+            "test case",
+        )
+        return any(signal in lower for signal in code_signals)
+
     def parse_request(self, user_input: str) -> dict:
         """Parse natural language request and determine action."""
         lower = user_input.lower().strip()
@@ -701,11 +725,19 @@ class ChatEngine:
                     break
             return {"action": "framework_expert", "task": task or "general", "confidence": 0.9}
 
-        # Fallback: treat as code generation
+        # Low-confidence fallback: ask for clarification unless there are clear code signals.
+        if self._looks_like_code_request(lower):
+            return {
+                "action": "generate",
+                "instruction": user_input,
+                "confidence": 0.65,
+                "stream": True,
+            }
+
         return {
-            "action": "generate",
-            "instruction": user_input,
-            "confidence": 0.6
+            "action": "clarify",
+            "original_input": user_input,
+            "confidence": 0.35,
         }
     
     def execute(self, request: dict) -> str:
@@ -795,6 +827,8 @@ class ChatEngine:
                 return self._handle_help_summary(request)
             elif action == "repo_summary":
                 return self._handle_repo_summary(request)
+            elif action == "clarify":
+                return self._handle_clarify(request)
             else:
                 return "❓ I didn't understand that. Try: 'write <code>', 'fix <file>', 'review <file>', 'debug <file>', 'profile <file>', 'coverage <file>', 'export knowledge', 'import knowledge <file>', 'prompt lab', 'build tool <name>', 'architecture', 'analyze diagram <text>', 'analyze schema', 'visualize diff', 'git status', 'generate pr', 'vscode setup', 'dashboard', 'collaborate <task>', 'route task <task>', 'agent memory <topic>', 'security scan <dir>', 'generate docs <file>', 'generate api <file>', 'resolve dependencies', 'optimize costs', 'team kb <query>', 'audit trail', 'rbac', 'model route <task>', 'team analytics', 'language summary <path>', 'framework expert <task>', 'search <query>', 'browse <path>', 'learn', or 'status'"
         except Exception as e:
@@ -1631,6 +1665,16 @@ Top Issues by File:
 
         lines.append("  • Core entrypoints: src/main.py, src/server.py, src/tools/chat_engine.py")
         return "\n".join(lines)
+
+    def _handle_clarify(self, request: dict) -> str:
+        """Ask a short follow-up when intent confidence is low."""
+        original = request.get("original_input", "").strip()
+        self._log_interaction(original or "clarify", "clarify", True)
+        return (
+            "❓ I want to make sure I route this correctly.\n"
+            f"Your prompt: {original or '(empty)'}\n"
+            "Reply with one of: generate code, fix a file, review code, debug, search, repo summary, or status."
+        )
 
 def run_chat_session(workspace_root: str = "."):
     """Run interactive chat session."""
