@@ -19,12 +19,23 @@ def test_roadmap_progress_parser(tmp_path):
 
 def test_benchmark_suite_with_mocks(monkeypatch, tmp_path):
     monkeypatch.setattr("src.tools.benchmark_runner.run_evaluation_suite", lambda: {"failed": 0})
-    monkeypatch.setattr("src.tools.benchmark_runner.run_regression_gate", lambda workspace_root: {"passed": True})
+    monkeypatch.setattr("src.tools.benchmark_runner.run_regression_gate", lambda workspace_root, profile="standard": {"passed": True})
     monkeypatch.setattr("src.tools.benchmark_runner.evaluate_budgets", lambda workspace_root: {"passed": True})
     monkeypatch.setattr("src.tools.benchmark_runner.scan_dependency_licenses", lambda workspace_root: {"passed": True})
     monkeypatch.setattr("src.tools.benchmark_runner.build_compliance_summary", lambda workspace_root: {"license_scan_passed": True, "playbooks_ready": True})
     out = run_benchmark_suite(str(tmp_path))
     assert out["score"] == 100.0
+
+
+def test_benchmark_suite_strict_penalizes_non_perfect(monkeypatch, tmp_path):
+    monkeypatch.setattr("src.tools.benchmark_runner.run_evaluation_suite", lambda: {"failed": 0})
+    monkeypatch.setattr("src.tools.benchmark_runner.run_regression_gate", lambda workspace_root, profile="standard": {"passed": True})
+    monkeypatch.setattr("src.tools.benchmark_runner.evaluate_budgets", lambda workspace_root: {"passed": False})
+    monkeypatch.setattr("src.tools.benchmark_runner.scan_dependency_licenses", lambda workspace_root: {"passed": True})
+    monkeypatch.setattr("src.tools.benchmark_runner.build_compliance_summary", lambda workspace_root: {"license_scan_passed": True, "playbooks_ready": True})
+    out = run_benchmark_suite(str(tmp_path), profile="strict")
+    assert out["profile"] == "strict"
+    assert out["score"] == 70.0
 
 
 def test_status_report_and_export(monkeypatch, tmp_path):

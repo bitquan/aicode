@@ -8,9 +8,22 @@ from src.tools.telemetry import summarize_telemetry
 def test_gate_runner_passes(monkeypatch):
     monkeypatch.setattr("src.tools.gate_runner.run_test_command", lambda command: {"success": True, "stdout": "", "stderr": "", "returncode": 0, "timed_out": False})
     monkeypatch.setattr("src.tools.gate_runner.run_evaluation_suite", lambda: {"failed": 0, "checks": [], "total": 0, "passed": 0})
+    monkeypatch.setattr("src.tools.gate_runner.evaluate_budgets", lambda workspace_root: {"passed": True})
+    monkeypatch.setattr("src.tools.gate_runner.scan_dependency_licenses", lambda workspace_root: {"passed": True})
     monkeypatch.setattr("src.tools.gate_runner.record_metric", lambda **kwargs: kwargs)
     out = run_regression_gate("python -m pytest -q")
     assert out["passed"] is True
+
+
+def test_gate_runner_strict_fails_on_budget(monkeypatch):
+    monkeypatch.setattr("src.tools.gate_runner.run_test_command", lambda command: {"success": True, "stdout": "", "stderr": "", "returncode": 0, "timed_out": False})
+    monkeypatch.setattr("src.tools.gate_runner.run_evaluation_suite", lambda: {"failed": 0, "checks": [], "total": 0, "passed": 0})
+    monkeypatch.setattr("src.tools.gate_runner.evaluate_budgets", lambda workspace_root: {"passed": False})
+    monkeypatch.setattr("src.tools.gate_runner.scan_dependency_licenses", lambda workspace_root: {"passed": True})
+    monkeypatch.setattr("src.tools.gate_runner.record_metric", lambda **kwargs: kwargs)
+    out = run_regression_gate("python -m pytest -q", profile="strict")
+    assert out["passed"] is False
+    assert out["strict_requirements"]["budgets_passed"] is False
 
 
 def test_telemetry_and_release_notes(tmp_path):

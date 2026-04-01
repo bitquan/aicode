@@ -5,13 +5,14 @@ from src.tools.gate_runner import run_regression_gate
 from src.tools.license_scanner import scan_dependency_licenses
 
 
-def run_benchmark_suite(workspace_root: str) -> dict:
+def run_benchmark_suite(workspace_root: str, profile: str = "default") -> dict:
     checks = []
 
     eval_report = run_evaluation_suite()
     checks.append({"name": "eval_suite", "passed": eval_report["failed"] == 0})
 
-    gate_report = run_regression_gate(workspace_root=workspace_root)
+    gate_profile = "strict" if profile == "strict" else "standard"
+    gate_report = run_regression_gate(workspace_root=workspace_root, profile=gate_profile)
     checks.append({"name": "regression_gate", "passed": bool(gate_report["passed"])})
 
     budget_report = evaluate_budgets(workspace_root)
@@ -26,7 +27,12 @@ def run_benchmark_suite(workspace_root: str) -> dict:
     passed = sum(1 for row in checks if row["passed"])
     total = len(checks)
     score = round((passed / total) * 100, 1) if total else 0.0
+
+    if profile == "strict" and score < 100.0:
+        score = max(0.0, score - 10.0)
+
     return {
+        "profile": profile,
         "score": score,
         "passed": passed,
         "total": total,

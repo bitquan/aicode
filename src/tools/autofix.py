@@ -4,7 +4,7 @@ from time import perf_counter
 
 from src.tools.circuit_breaker import should_trip_circuit_breaker
 from src.tools.autofix_state import save_autofix_state
-from src.tools.budget_tracker import record_metric
+from src.tools.budget_tracker import record_metric, record_model_usage
 from src.tools.confidence import score_attempt_confidence
 from src.tools.failure_parser import classify_failure
 from src.tools.fix_memory import retrieve_similar_fixes, store_fix_memory
@@ -110,6 +110,14 @@ def run_autofix_loop(
     for attempt_index in range(1, max_attempts + 1):
         current_content = target.read_text(encoding="utf-8")
         updated_content = agent.rewrite_file(target_path, loop_instruction, current_content)
+        record_model_usage(
+            workspace_root=workspace_root,
+            model=getattr(agent, "model", "unknown"),
+            prompt=loop_instruction,
+            response=updated_content,
+            success=True,
+            trace_id=trace_id,
+        )
         diff = preview_diff(current_content, updated_content, target_path)
 
         if not diff:

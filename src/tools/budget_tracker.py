@@ -78,21 +78,32 @@ def record_metric(
     return payload
 
 
-def record_model_usage(workspace_root: str, model: str, prompt: str, response: str, success: bool):
+def record_model_usage(
+    workspace_root: str,
+    model: str,
+    prompt: str,
+    response: str,
+    success: bool,
+    trace_id: str | None = None,
+):
     input_tokens = estimate_tokens(prompt)
     output_tokens = estimate_tokens(response)
     cost = estimate_cost_usd(workspace_root, input_tokens=input_tokens, output_tokens=output_tokens)
+    metadata = {
+        "model": model,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "estimated_cost_usd": cost,
+    }
+    if trace_id:
+        metadata["trace_id"] = trace_id
+
     return record_metric(
         workspace_root=workspace_root,
         workflow="model_inference",
         duration_seconds=0.0,
         success=success,
-        metadata={
-            "model": model,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "estimated_cost_usd": cost,
-        },
+        metadata=metadata,
     )
 
 

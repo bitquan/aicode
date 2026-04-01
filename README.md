@@ -97,11 +97,14 @@ poetry run python -m src.main budget check
 poetry run python -m src.main budget metrics 20
 poetry run python -m src.main cost-estimate 1000 500
 poetry run python -m src.main cost-summary
+poetry run python -m src.main cost-by-trace
 poetry run python -m src.main policy-check edit --role developer --auto
 poetry run python -m src.main resume-autofix <trace_id>
 poetry run python -m src.main incident-timeline <trace_id>
 poetry run python -m src.main incident-report <trace_id>
-poetry run python -m src.main benchmark
+poetry run python -m src.main postmortem <trace_id>
+poetry run python -m src.main gate --profile strict
+poetry run python -m src.main benchmark --profile strict
 poetry run python -m src.main status
 poetry run python -m src.main status-export
 poetry run python -m src.main self-improve --cycles 3 --target-score 95

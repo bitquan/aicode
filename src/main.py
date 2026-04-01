@@ -18,6 +18,7 @@ from src.tools.budget_tracker import (
     summarize_costs,
 )
 from src.tools.compliance_summary import build_compliance_summary
+from src.tools.cost_attribution import summarize_costs_by_trace
 from src.tools.dependency_inventory import read_dependency_inventory
 from src.tools.docs_assistant import build_doc_update
 from src.tools.eval_runner import run_evaluation_suite
@@ -29,6 +30,7 @@ from src.tools.release_notes import generate_release_notes
 from src.tools.retention import cleanup_reports
 from src.tools.license_scanner import scan_dependency_licenses
 from src.tools.incident_automation import build_incident_timeline, generate_incident_report
+from src.tools.postmortem_builder import generate_postmortem_from_blocker
 from src.tools.playbook_manager import get_playbook_status, scaffold_playbooks
 from src.tools.self_improve import run_self_improvement_cycles
 from src.tools.status_report import build_status_report, export_status_markdown
@@ -87,9 +89,11 @@ def _print_usage():
     print("  python -m src.main budget show|set|check|metrics ...")
     print("  python -m src.main cost-estimate <input_tokens> <output_tokens>")
     print("  python -m src.main cost-summary")
+    print("  python -m src.main cost-by-trace")
     print("  python -m src.main incident-timeline <trace_id>")
     print("  python -m src.main incident-report <trace_id>")
-    print("  python -m src.main benchmark")
+    print("  python -m src.main postmortem <trace_id>")
+    print("  python -m src.main benchmark [--profile default|strict]")
     print("  python -m src.main status")
     print("  python -m src.main status-export")
     print("  python -m src.main self-improve [--cycles N] [--target-score X]")
@@ -302,8 +306,15 @@ def main():
         return
 
     if args and args[0] == "gate":
-        command = " ".join(args[1:]).strip() if len(args) > 1 else "python -m pytest -q"
-        print(run_regression_gate(command, workspace_root=str(Path.cwd())))
+        profile = "standard"
+        clean = args[1:]
+        if "--profile" in clean:
+            idx = clean.index("--profile")
+            if idx + 1 < len(clean):
+                profile = clean[idx + 1]
+                del clean[idx:idx + 2]
+        command = " ".join(clean).strip() if clean else "python -m pytest -q"
+        print(run_regression_gate(command, workspace_root=str(Path.cwd()), profile=profile))
         return
 
     if args and args[0] == "telemetry":
@@ -407,6 +418,10 @@ def main():
         print(summarize_costs(str(Path.cwd())))
         return
 
+    if args and args[0] == "cost-by-trace":
+        print(summarize_costs_by_trace(str(Path.cwd())))
+        return
+
     if args and args[0] == "incident-timeline":
         if len(args) != 2:
             print("Usage: python -m src.main incident-timeline <trace_id>")
@@ -421,8 +436,20 @@ def main():
         print(generate_incident_report(str(Path.cwd()), args[1]))
         return
 
+    if args and args[0] == "postmortem":
+        if len(args) != 2:
+            print("Usage: python -m src.main postmortem <trace_id>")
+            return
+        print(generate_postmortem_from_blocker(str(Path.cwd()), args[1]))
+        return
+
     if args and args[0] == "benchmark":
-        print(run_benchmark_suite(str(Path.cwd())))
+        profile = "default"
+        if "--profile" in args:
+            idx = args.index("--profile")
+            if idx + 1 < len(args):
+                profile = args[idx + 1]
+        print(run_benchmark_suite(str(Path.cwd()), profile=profile))
         return
 
     if args and args[0] == "status":
