@@ -133,8 +133,14 @@ class MarkdownRenderer:
 class ChatEngine:
     """Conversational interface that understands coding requests."""
 
-    def __init__(self, workspace_root: str = ".", load_context: bool = True):
+    def __init__(
+        self,
+        workspace_root: str = ".",
+        load_context: bool = True,
+        server_process: bool = False,
+    ):
         self.workspace_root = Path(workspace_root).resolve()
+        self.server_process = server_process
         self.agent = CodingAgent()
         self.capabilities = load_capabilities()
         self.context: dict[str, Any] = {}
@@ -244,6 +250,17 @@ class ChatEngine:
         port = os.getenv("PORT", "8005").strip() or "8005"
         return f"http://{host}:{port}"
 
+    def _local_server_health_snapshot(self) -> dict[str, Any]:
+        """Build a non-recursive local server snapshot for in-process API requests."""
+        ollama_base_url = str(
+            getattr(self.agent, "base_url", os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434"))
+        ).rstrip("/")
+        return {
+            "status": "ok",
+            "workspace_root": str(self.workspace_root),
+            "base_url": ollama_base_url,
+        }
+
     @staticmethod
     def _json_probe(url: str, timeout_seconds: float = 0.35) -> dict[str, Any]:
         try:
@@ -276,7 +293,10 @@ class ChatEngine:
     def get_self_awareness_snapshot(self) -> dict[str, Any]:
         """Return live runtime and capability awareness for research/help flows."""
         server_url = self._server_base_url()
-        server_health = self._json_probe(f"{server_url}/healthz")
+        if self.server_process:
+            server_health = self._local_server_health_snapshot()
+        else:
+            server_health = self._json_probe(f"{server_url}/healthz")
 
         ollama_url = str(
             server_health.get("base_url")

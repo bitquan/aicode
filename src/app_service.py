@@ -14,9 +14,13 @@ from src.tools.learning_events import record_output_trace, record_prompt_event, 
 class AppService:
     """Thin service wrapper around the chat engine for app-level entrypoints."""
 
-    def __init__(self, workspace_root: str = "."):
+    def __init__(self, workspace_root: str = ".", *, server_process: bool = False):
         self.workspace_root = Path(workspace_root).resolve()
-        self._engine = ChatEngine(str(self.workspace_root), load_context=False)
+        self._engine = ChatEngine(
+            str(self.workspace_root),
+            load_context=False,
+            server_process=server_process,
+        )
 
     @staticmethod
     def _looks_like_path(value: str) -> bool:

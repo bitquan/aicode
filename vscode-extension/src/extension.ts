@@ -131,6 +131,13 @@ type StreamCallbacks = {
   onDone?: (payload: StreamEventPayload) => void;
 };
 
+const WORKSPACE_TASK_LABELS = {
+  server: 'run:aicode-server',
+  ollama: 'run:ollama-serve',
+  tests: 'test:aicode-all',
+  buildExtension: 'build:vscode-extension',
+} as const;
+
 function getConfiguration(): vscode.WorkspaceConfiguration {
   return vscode.workspace.getConfiguration('aicode');
 }
@@ -145,6 +152,10 @@ function shouldAutoStartOllama(): boolean {
 
 function shouldUseIntegratedTerminal(): boolean {
   return Boolean(getConfiguration().get('showManagedProcessesInTerminal', true));
+}
+
+function preferWorkspaceTasks(): boolean {
+  return Boolean(getConfiguration().get('preferWorkspaceTasks', true));
 }
 
 function normalizeBaseUrl(): string {
@@ -316,7 +327,12 @@ class SidebarQuickActionsProvider implements vscode.TreeDataProvider<vscode.Tree
     restart.description = 'Managed process';
     restart.iconPath = new vscode.ThemeIcon('debug-restart');
 
-    return [openPanel, ask, status, restart];
+    const runTask = new vscode.TreeItem('Run VS Code Task', vscode.TreeItemCollapsibleState.None);
+    runTask.command = { command: 'aicode.runWorkspaceTask', title: 'Run VS Code Task' };
+    runTask.description = 'Workspace task picker';
+    runTask.iconPath = new vscode.ThemeIcon('tools');
+
+    return [openPanel, ask, status, restart, runTask];
   }
 }
 
@@ -362,11 +378,14 @@ class ServerManager implements vscode.Disposable {
   private startedByExtension = false;
   private ollamaChild: ChildProcess | undefined;
   private startedOllamaByExtension = false;
+  private serverTaskExecution: vscode.TaskExecution | undefined;
+  private ollamaTaskExecution: vscode.TaskExecution | undefined;
   private serverTerminal: vscode.Terminal | undefined;
   private ollamaTerminal: vscode.Terminal | undefined;
   private readonly statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   private readonly emitter = new vscode.EventEmitter<ServerStatusSnapshot>();
   private readonly healthTimer: ReturnType<typeof setInterval>;
+  private readonly taskDisposables: vscode.Disposable[] = [];
   private lastOutputLines: string[] = [];
   private lastExitDetail = 'No server process launched yet.';
   private lastOllamaExitDetail = 'No Ollama process launched yet.';
@@ -398,6 +417,38 @@ class ServerManager implements vscode.Disposable {
     this.healthTimer = setInterval(() => {
       void this.refreshHealth(false);
     }, 15000);
+
+    this.taskDisposables.push(
+      vscode.tasks.onDidEndTaskProcess((event) => {
+        if (this.serverTaskExecution && event.execution === this.serverTaskExecution) {
+          const detail = `Server task ended${typeof event.exitCode === 'number' ? ` with code ${event.exitCode}` : ''}`;
+          this.lastExitDetail = detail;
+          this.actionLog.append('server', detail, 'extension');
+          this.serverTaskExecution = undefined;
+          if (!(this.child && this.child.exitCode === null) && !this.serverTerminal) {
+            this.startedByExtension = false;
+            this.updateStatus('$(warning) aicode', detail, false);
+          }
+        }
+        if (this.ollamaTaskExecution && event.execution === this.ollamaTaskExecution) {
+          const detail = `Ollama task ended${typeof event.exitCode === 'number' ? ` with code ${event.exitCode}` : ''}`;
+          this.lastOllamaExitDetail = detail;
+          this.actionLog.append('ollama', detail, 'extension');
+          this.ollamaTaskExecution = undefined;
+          if (!(this.ollamaChild && this.ollamaChild.exitCode === null) && !this.ollamaTerminal) {
+            this.startedOllamaByExtension = false;
+          }
+        }
+      }),
+      vscode.tasks.onDidEndTask((event) => {
+        if (this.serverTaskExecution && event.execution === this.serverTaskExecution) {
+          this.serverTaskExecution = undefined;
+        }
+        if (this.ollamaTaskExecution && event.execution === this.ollamaTaskExecution) {
+          this.ollamaTaskExecution = undefined;
+        }
+      }),
+    );
   }
 
   baseUrl(): string {
@@ -419,14 +470,14 @@ class ServerManager implements vscode.Disposable {
   isManagedServerRunning(): boolean {
     return Boolean(
       this.startedByExtension
-      && ((this.child && this.child.exitCode === null) || this.serverTerminal),
+      && ((this.child && this.child.exitCode === null) || this.serverTerminal || this.serverTaskExecution),
     );
   }
 
   isManagedOllamaRunning(): boolean {
     return Boolean(
       this.startedOllamaByExtension
-      && ((this.ollamaChild && this.ollamaChild.exitCode === null) || this.ollamaTerminal),
+      && ((this.ollamaChild && this.ollamaChild.exitCode === null) || this.ollamaTerminal || this.ollamaTaskExecution),
     );
   }
 
@@ -511,6 +562,33 @@ class ServerManager implements vscode.Disposable {
     return this.waitForHealthy();
   }
 
+  async start(): Promise<HealthResponse> {
+    const healthy = await this.refreshHealth(false);
+    if (healthy) {
+      return healthy;
+    }
+    await this.startServer();
+    return this.waitForHealthy();
+  }
+
+  async stop(): Promise<void> {
+    await this.shutdownManagedServer('Stopped from aicode command');
+  }
+
+  async startOllama(): Promise<OllamaHealth> {
+    const baseUrl = this.lastHealth?.base_url ?? defaultOllamaBaseUrl();
+    await this.startOllamaServe(baseUrl);
+    return this.waitForOllamaReady(baseUrl, 20000);
+  }
+
+  async stopOllama(): Promise<void> {
+    if (this.isManagedOllamaRunning()) {
+      this.actionLog.append('ollama', 'Stopping managed Ollama', 'extension');
+      await this.stopManagedOllamaProcess();
+      this.startedOllamaByExtension = false;
+    }
+  }
+
   private configBaseDir(): string {
     return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? this.context.extensionPath;
   }
@@ -572,6 +650,80 @@ class ServerManager implements vscode.Disposable {
       return process.platform === 'darwin' ? '/opt/homebrew/bin/ollama' : 'ollama';
     }
     return path.isAbsolute(configured) ? configured : path.resolve(this.configBaseDir(), configured);
+  }
+
+  private async findTaskByLabel(label: string): Promise<vscode.Task | undefined> {
+    const tasks = await vscode.tasks.fetchTasks();
+    return tasks.find((task) => task.name === label) ?? tasks.find((task) => task.definition?.label === label);
+  }
+
+  private async executeWorkspaceTask(
+    label: string,
+    kind: 'server' | 'ollama' | 'task',
+  ): Promise<vscode.TaskExecution | undefined> {
+    if (!preferWorkspaceTasks()) {
+      return undefined;
+    }
+    const task = await this.findTaskByLabel(label);
+    if (!task) {
+      return undefined;
+    }
+    const execution = await vscode.tasks.executeTask(task);
+    if (kind === 'server') {
+      this.serverTaskExecution = execution;
+      this.startedByExtension = true;
+      this.lastExitDetail = `Server task running: ${label}`;
+      this.actionLog.append('server', `Started workspace task ${label}`, 'extension');
+      this.updateStatus('$(sync~spin) aicode', `Starting local server via VS Code task ${label}`, false);
+    } else if (kind === 'ollama') {
+      this.ollamaTaskExecution = execution;
+      this.startedOllamaByExtension = true;
+      this.lastOllamaExitDetail = `Ollama task running: ${label}`;
+      this.actionLog.append('ollama', `Started workspace task ${label}`, 'extension');
+    } else {
+      this.actionLog.append('task', `Started workspace task ${label}`, 'extension');
+    }
+    return execution;
+  }
+
+  async runWorkspaceTask(label?: string): Promise<void> {
+    const tasks = await vscode.tasks.fetchTasks();
+    const candidates = tasks
+      .filter((task) => Boolean(task.name))
+      .sort((left, right) => left.name.localeCompare(right.name));
+
+    if (!candidates.length) {
+      throw new Error('No VS Code workspace tasks were found.');
+    }
+
+    let selectedLabel = label;
+    if (!selectedLabel) {
+      const picked = await vscode.window.showQuickPick(
+        candidates.map((task) => ({
+          label: task.name,
+          description: String(task.source ?? 'workspace'),
+        })),
+        {
+          placeHolder: 'Choose a VS Code task for aicode to run',
+          ignoreFocusOut: true,
+        },
+      );
+      if (!picked) {
+        return;
+      }
+      selectedLabel = picked.label;
+    }
+
+    const kind: 'server' | 'ollama' | 'task' =
+      selectedLabel === WORKSPACE_TASK_LABELS.server
+        ? 'server'
+        : selectedLabel === WORKSPACE_TASK_LABELS.ollama
+          ? 'ollama'
+          : 'task';
+    const execution = await this.executeWorkspaceTask(selectedLabel, kind);
+    if (!execution) {
+      throw new Error(`VS Code task not found: ${selectedLabel}`);
+    }
   }
 
   private updateStatus(text: string, detail: string, healthy: boolean): void {
@@ -801,6 +953,9 @@ class ServerManager implements vscode.Disposable {
     if (this.child && this.child.exitCode === null) {
       return;
     }
+    if (this.serverTaskExecution) {
+      return;
+    }
     if (this.serverTerminal) {
       this.serverTerminal.show(true);
       return;
@@ -820,6 +975,11 @@ class ServerManager implements vscode.Disposable {
     this.lastOutputLines = [];
     this.lastExitDetail = 'Server launch in progress.';
     this.updateStatus('$(sync~spin) aicode', `Starting local server in ${serverRoot}`, false);
+
+    const taskExecution = await this.executeWorkspaceTask(WORKSPACE_TASK_LABELS.server, 'server');
+    if (taskExecution) {
+      return;
+    }
 
     if (shouldUseIntegratedTerminal()) {
       const terminal = vscode.window.createTerminal({
@@ -863,6 +1023,9 @@ class ServerManager implements vscode.Disposable {
     if (this.ollamaChild && this.ollamaChild.exitCode === null) {
       return;
     }
+    if (this.ollamaTaskExecution) {
+      return;
+    }
     if (this.ollamaTerminal) {
       this.ollamaTerminal.show(true);
       return;
@@ -870,6 +1033,10 @@ class ServerManager implements vscode.Disposable {
 
     const ollamaPath = this.resolveOllamaPath();
     this.actionLog.append('ollama', `Starting Ollama: ${ollamaPath} serve`, 'extension');
+    const taskExecution = await this.executeWorkspaceTask(WORKSPACE_TASK_LABELS.ollama, 'ollama');
+    if (taskExecution) {
+      return;
+    }
     if (shouldUseIntegratedTerminal()) {
       const terminal = vscode.window.createTerminal({
         name: 'aicode ollama',
@@ -933,6 +1100,12 @@ class ServerManager implements vscode.Disposable {
   }
 
   private async stopManagedProcess(): Promise<void> {
+    if (this.serverTaskExecution) {
+      const execution = this.serverTaskExecution;
+      this.serverTaskExecution = undefined;
+      execution.terminate();
+      return;
+    }
     if (this.serverTerminal) {
       this.serverTerminal.dispose();
       this.serverTerminal = undefined;
@@ -970,6 +1143,12 @@ class ServerManager implements vscode.Disposable {
   }
 
   private async stopManagedOllamaProcess(): Promise<void> {
+    if (this.ollamaTaskExecution) {
+      const execution = this.ollamaTaskExecution;
+      this.ollamaTaskExecution = undefined;
+      execution.terminate();
+      return;
+    }
     if (this.ollamaTerminal) {
       this.ollamaTerminal.dispose();
       this.ollamaTerminal = undefined;
@@ -1010,6 +1189,9 @@ class ServerManager implements vscode.Disposable {
 
   dispose(): void {
     clearInterval(this.healthTimer);
+    for (const disposable of this.taskDisposables) {
+      disposable.dispose();
+    }
     this.statusBar.dispose();
     this.emitter.dispose();
     if (this.serverTerminal) {
@@ -1235,7 +1417,10 @@ function panelHtml(): string {
     <div id="buildStatus">Extension build unknown</div>
     <div class="row">
       <button id="health">Check API</button>
+      <button id="startServer">Start Server</button>
       <button id="restart">Restart Server</button>
+      <button id="stopServer">Stop Server</button>
+      <button id="runTask">Run Task</button>
     </div>
   </details>
 
@@ -1306,7 +1491,6 @@ function panelHtml(): string {
     if (__bootBuildStatus) {
       __bootBuildStatus.textContent = 'Loading extension build metadata...';
     }
-    postBootMessage('boot');
 
     function startPanel() {
     if (__aicodeStarted) {
@@ -1324,7 +1508,10 @@ function panelHtml(): string {
     const runtimePill = document.getElementById('runtimePill');
     const send = document.getElementById('send');
     const health = document.getElementById('health');
+    const startServer = document.getElementById('startServer');
     const restart = document.getElementById('restart');
+    const stopServer = document.getElementById('stopServer');
+    const runTask = document.getElementById('runTask');
     const editFile = document.getElementById('editFile');
     const editSelection = document.getElementById('editSelection');
     const inlineChat = document.getElementById('inlineChat');
@@ -1590,7 +1777,10 @@ function panelHtml(): string {
 
     send.addEventListener('click', submit);
     health.addEventListener('click', () => vscode.postMessage({ type: 'health' }));
+    startServer.addEventListener('click', () => vscode.postMessage({ type: 'startServer' }));
     restart.addEventListener('click', () => vscode.postMessage({ type: 'restartServer' }));
+    stopServer.addEventListener('click', () => vscode.postMessage({ type: 'stopServer' }));
+    runTask.addEventListener('click', () => vscode.postMessage({ type: 'runWorkspaceTask' }));
     editFile.addEventListener('click', () => vscode.postMessage({ type: 'editCurrentFile' }));
     editSelection.addEventListener('click', () => vscode.postMessage({ type: 'editSelection' }));
     inlineChat.addEventListener('click', () => vscode.postMessage({ type: 'inlineChat' }));
@@ -1666,6 +1856,7 @@ function panelHtml(): string {
       }
     });
 
+    postBootMessage('boot');
     renderRecent();
     setTimeout(() => vscode.postMessage({ type: 'ready' }), 0);
     } catch (error) {
@@ -2139,6 +2330,22 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
 
+  const startDisposable = vscode.commands.registerCommand('aicode.startServer', async () => {
+    try {
+      const health = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: 'Starting aicode server…' },
+        () => serverManager.start(),
+      );
+      const message = formatHealthSummary(health);
+      actionLog.append('health', message, 'extension');
+      vscode.window.showInformationMessage(message);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      actionLog.append('error', message, 'extension');
+      vscode.window.showErrorMessage(`Could not start aicode server: ${message}`);
+    }
+  });
+
   const restartDisposable = vscode.commands.registerCommand('aicode.restartServer', async () => {
     try {
       const health = await vscode.window.withProgress(
@@ -2150,6 +2357,56 @@ export function activate(context: vscode.ExtensionContext) {
       const message = error instanceof Error ? error.message : String(error);
       actionLog.append('error', message, 'extension');
       vscode.window.showErrorMessage(`Could not restart aicode server: ${message}`);
+    }
+  });
+
+  const stopDisposable = vscode.commands.registerCommand('aicode.stopServer', async () => {
+    try {
+      await serverManager.stop();
+      vscode.window.showInformationMessage('Stopped the managed aicode server/task.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      actionLog.append('error', message, 'extension');
+      vscode.window.showErrorMessage(`Could not stop aicode server: ${message}`);
+    }
+  });
+
+  const startOllamaDisposable = vscode.commands.registerCommand('aicode.startOllama', async () => {
+    try {
+      const health = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: 'Starting Ollama…' },
+        () => serverManager.startOllama(),
+      );
+      const message = health.reachable
+        ? `Ollama is reachable at ${defaultOllamaBaseUrl()}.`
+        : `Ollama is not reachable: ${health.detail}`;
+      actionLog.append('ollama', message, 'extension');
+      vscode.window.showInformationMessage(message);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      actionLog.append('error', message, 'extension');
+      vscode.window.showErrorMessage(`Could not start Ollama: ${message}`);
+    }
+  });
+
+  const stopOllamaDisposable = vscode.commands.registerCommand('aicode.stopOllama', async () => {
+    try {
+      await serverManager.stopOllama();
+      vscode.window.showInformationMessage('Stopped the managed Ollama task/process.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      actionLog.append('error', message, 'extension');
+      vscode.window.showErrorMessage(`Could not stop Ollama: ${message}`);
+    }
+  });
+
+  const runWorkspaceTaskDisposable = vscode.commands.registerCommand('aicode.runWorkspaceTask', async () => {
+    try {
+      await serverManager.runWorkspaceTask();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      actionLog.append('error', message, 'extension');
+      vscode.window.showErrorMessage(`Could not run VS Code task: ${message}`);
     }
   });
 
@@ -2331,7 +2588,7 @@ export function activate(context: vscode.ExtensionContext) {
           : {};
       panelDebug(`Panel -> extension: ${String(payload.type ?? 'unknown')}`);
 
-      if (!panelReady) {
+      if (payload.type === 'ready' && !panelReady) {
         panelReady = true;
         flushPanelMessages();
       }
@@ -2367,6 +2624,20 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
+      if (payload.type === 'startServer') {
+        try {
+          const health = await serverManager.start();
+          postPanelMessage({
+            type: 'health',
+            message: formatHealthSummary(health),
+          });
+        } catch (error) {
+          const text = error instanceof Error ? error.message : String(error);
+          postPanelMessage({ type: 'error', command: 'start', message: text });
+        }
+        return;
+      }
+
       if (payload.type === 'restartServer') {
         try {
           const health = await serverManager.restart();
@@ -2377,6 +2648,34 @@ export function activate(context: vscode.ExtensionContext) {
         } catch (error) {
           const text = error instanceof Error ? error.message : String(error);
           postPanelMessage({ type: 'error', command: 'restart', message: text });
+        }
+        return;
+      }
+
+      if (payload.type === 'stopServer') {
+        try {
+          await serverManager.stop();
+          postPanelMessage({
+            type: 'health',
+            message: 'Stopped the managed aicode server/task.',
+          });
+        } catch (error) {
+          const text = error instanceof Error ? error.message : String(error);
+          postPanelMessage({ type: 'error', command: 'stop', message: text });
+        }
+        return;
+      }
+
+      if (payload.type === 'runWorkspaceTask') {
+        try {
+          await serverManager.runWorkspaceTask();
+          postPanelMessage({
+            type: 'health',
+            message: 'Started a VS Code workspace task.',
+          });
+        } catch (error) {
+          const text = error instanceof Error ? error.message : String(error);
+          postPanelMessage({ type: 'error', command: 'task', message: text });
         }
         return;
       }
@@ -2452,7 +2751,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     askDisposable,
     statusDisposable,
+    startDisposable,
     restartDisposable,
+    stopDisposable,
+    startOllamaDisposable,
+    stopOllamaDisposable,
+    runWorkspaceTaskDisposable,
     showActionLogDisposable,
     applyInlineSuggestionDisposable,
     editCurrentFileDisposable,

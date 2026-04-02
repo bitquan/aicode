@@ -64,7 +64,7 @@ _system_prompt = _prompt_layers.get("system", "")
 
 WORKSPACE_ROOT = Path(os.getenv("WORKSPACE_ROOT", str(Path.cwd()))).resolve()
 _dashboard_builder = DashboardBuilder(str(WORKSPACE_ROOT))
-_app_service = AppService(str(WORKSPACE_ROOT))
+_app_service = AppService(str(WORKSPACE_ROOT), server_process=True)
 SERVER_STARTED_AT = utc_now_iso()
 RUNTIME_METADATA = build_runtime_metadata(
     workspace_root=str(WORKSPACE_ROOT),

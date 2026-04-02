@@ -2,7 +2,7 @@
   "name": "aicode-thin-client",
   "displayName": "aicode Local Agent",
   "description": "VS Code client with managed local server, editor chat, and diff preview for aicode",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "publisher": "aicode-local",
   "license": "MIT",
   "engines": {
@@ -55,6 +55,26 @@
       {
         "command": "aicode.restartServer",
         "title": "aicode: Restart Local Server"
+      },
+      {
+        "command": "aicode.startServer",
+        "title": "aicode: Start Local Server"
+      },
+      {
+        "command": "aicode.stopServer",
+        "title": "aicode: Stop Local Server"
+      },
+      {
+        "command": "aicode.startOllama",
+        "title": "aicode: Start Ollama Task"
+      },
+      {
+        "command": "aicode.stopOllama",
+        "title": "aicode: Stop Ollama Task"
+      },
+      {
+        "command": "aicode.runWorkspaceTask",
+        "title": "aicode: Run VS Code Task"
       },
       {
         "command": "aicode.showActionLog",
@@ -130,6 +150,11 @@
           "type": "boolean",
           "default": true,
           "description": "Launch extension-managed aicode server and Ollama inside named VS Code terminals so live logs stay visible."
+        },
+        "aicode.preferWorkspaceTasks": {
+          "type": "boolean",
+          "default": true,
+          "description": "Prefer running workspace VS Code tasks like run:aicode-server and run:ollama-serve before falling back to extension-managed processes."
         },
         "aicode.stopServerOnDeactivate": {
           "type": "boolean",

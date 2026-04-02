@@ -417,3 +417,38 @@ def test_self_awareness_includes_confidence_metrics(mock_events, mock_status, mo
     assert "recent_decision_metrics" in snapshot
     assert snapshot["recent_decision_metrics"]["events_considered"] == 2
     assert snapshot["recent_decision_metrics"]["research_trigger_count"] == 1
+
+
+@patch('src.tools.chat_engine.CodingAgent')
+@patch('src.tools.chat_engine.build_file_index')
+@patch('src.tools.chat_engine.build_status_report')
+@patch('src.tools.chat_engine.read_prompt_events')
+def test_self_awareness_server_process_skips_recursive_health_probe(
+    mock_events,
+    mock_status,
+    mock_index,
+    mock_agent,
+):
+    agent = MagicMock()
+    agent.base_url = "http://127.0.0.1:11434"
+    mock_agent.return_value = agent
+    mock_index.return_value = {}
+    mock_status.return_value = {}
+    mock_events.return_value = []
+
+    engine = ChatEngine(".", server_process=True)
+    probed_urls: list[str] = []
+
+    def fake_probe(url: str, timeout_seconds: float = 0.35):
+        del timeout_seconds
+        probed_urls.append(url)
+        if url.endswith("/api/tags"):
+            return {"models": [{"model": "qwen2.5-coder:7b"}]}
+        return {}
+
+    with patch.object(engine, "_json_probe", side_effect=fake_probe):
+        snapshot = engine.get_self_awareness_snapshot()
+
+    assert snapshot["server"]["reachable"] is True
+    assert snapshot["server"]["status"] == "ok"
+    assert not any(url.endswith("/healthz") for url in probed_urls)

@@ -33,9 +33,13 @@ function createEventEmitterClass() {
 function createVscodeStub(repoRoot) {
   const commands = new Map();
   const EventEmitter = createEventEmitterClass();
+  const endTaskProcessEmitter = new EventEmitter();
+  const endTaskEmitter = new EventEmitter();
   let receiveMessageHandler;
   let disposeHandler;
   const postedMessages = [];
+  const executedTasks = [];
+  const terminatedTasks = [];
 
   const panel = {
     webview: {
@@ -74,6 +78,12 @@ function createVscodeStub(repoRoot) {
     command: undefined,
     backgroundColor: undefined,
     show() {},
+    dispose() {},
+  };
+
+  const terminal = {
+    show() {},
+    sendText() {},
     dispose() {},
   };
 
@@ -122,6 +132,33 @@ function createVscodeStub(repoRoot) {
         return await callback(...args);
       },
     },
+    tasks: {
+      async fetchTasks() {
+        return [
+          { name: 'run:aicode-server', source: 'workspace', definition: { label: 'run:aicode-server' } },
+          { name: 'run:ollama-serve', source: 'workspace', definition: { label: 'run:ollama-serve' } },
+          { name: 'test:aicode-all', source: 'workspace', definition: { label: 'test:aicode-all' } },
+        ];
+      },
+      async executeTask(task) {
+        const execution = {
+          task,
+          terminate() {
+            terminatedTasks.push(task.name);
+            endTaskProcessEmitter.fire({ execution, exitCode: 0 });
+            endTaskEmitter.fire({ execution });
+          },
+        };
+        executedTasks.push(task.name);
+        return execution;
+      },
+      onDidEndTaskProcess(listener) {
+        return endTaskProcessEmitter.event(listener);
+      },
+      onDidEndTask(listener) {
+        return endTaskEmitter.event(listener);
+      },
+    },
     workspace: {
       workspaceFolders: [{ uri: { fsPath: repoRoot } }],
       getConfiguration() {
@@ -153,6 +190,9 @@ function createVscodeStub(repoRoot) {
       createTreeView() {
         return createDisposable();
       },
+      createTerminal() {
+        return terminal;
+      },
       createWebviewPanel() {
         return panel;
       },
@@ -176,6 +216,8 @@ function createVscodeStub(repoRoot) {
     output,
     statusBar,
     postedMessages,
+    executedTasks,
+    terminatedTasks,
     sendToExtension(message) {
       if (!receiveMessageHandler) {
         throw new Error('Webview message handler not registered');
@@ -247,6 +289,14 @@ test('panel ready handshake posts init and live server status back to the webvie
   try {
     extension.activate({ extensionPath: path.resolve(repoRoot, 'vscode-extension'), subscriptions: [] });
     await stub.commands.get('aicode.openPanel')();
+    assert.equal(stub.postedMessages.length, 0);
+    await stub.sendToExtension({ type: 'boot' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(
+      stub.postedMessages.length,
+      0,
+      'Boot should not flush queued panel state before the webview is ready.',
+    );
     await stub.sendToExtension({ type: 'ready' });
     await new Promise((resolve) => setTimeout(resolve, 0));
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -264,6 +314,87 @@ test('panel ready handshake posts init and live server status back to the webvie
     assert.ok(statusMessage.status.extensionBuild, 'Expected extension build metadata in server status');
     assert.equal(statusMessage.status.extensionBuild.runtime_mode, 'development-host');
     assert.equal(statusMessage.status.integrityIssue, undefined);
+  } finally {
+    await extension.deactivate();
+    for (const disposable of [stub.panel, stub.output, stub.statusBar]) {
+      if (disposable && typeof disposable.dispose === 'function') {
+        disposable.dispose();
+      }
+    }
+    Module._load = originalLoad;
+    global.fetch = originalFetch;
+    delete require.cache[extensionModulePath];
+  }
+});
+
+test('explicit start and stop commands use VS Code workspace tasks when available', async () => {
+  const repoRoot = path.resolve(__dirname, '..', '..');
+  const stub = createVscodeStub(repoRoot);
+  const extensionModulePath = require.resolve('../out/extension.js');
+  const originalLoad = Module._load;
+  const originalFetch = global.fetch;
+
+  global.fetch = async (url) => {
+    if (String(url).endsWith('/healthz')) {
+      if (!stub.executedTasks.includes('run:aicode-server')) {
+        throw new Error('server offline');
+      }
+      return {
+        ok: true,
+        async json() {
+          return {
+            status: 'ok',
+            workspace_root: repoRoot,
+            model: 'qwen2.5-coder:7b',
+            base_url: 'http://127.0.0.1:11434',
+            ollama: {
+              reachable: true,
+              detail: 'reachable',
+              model_available: true,
+            },
+            runtime: {
+              manifest_version: 1,
+              app_version: '0.1.0',
+              routing_generation: 4,
+              readiness_suite_version: 2,
+            },
+          };
+        },
+        async text() {
+          return '';
+        },
+      };
+    }
+    if (String(url).endsWith('/api/tags')) {
+      return {
+        ok: true,
+        async json() {
+          return { models: [{ model: 'qwen2.5-coder:7b' }] };
+        },
+        async text() {
+          return '';
+        },
+      };
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  Module._load = function patchedLoad(request, parent, isMain) {
+    if (request === 'vscode') {
+      return stub.vscode;
+    }
+    return originalLoad.call(this, request, parent, isMain);
+  };
+
+  delete require.cache[extensionModulePath];
+  const extension = require(extensionModulePath);
+
+  try {
+    extension.activate({ extensionPath: path.resolve(repoRoot, 'vscode-extension'), subscriptions: [] });
+    await stub.commands.get('aicode.startServer')();
+    assert.ok(stub.executedTasks.includes('run:aicode-server'));
+    await stub.commands.get('aicode.stopServer')();
+    assert.ok(stub.terminatedTasks.includes('run:aicode-server'));
   } finally {
     await extension.deactivate();
     for (const disposable of [stub.panel, stub.output, stub.statusBar]) {
