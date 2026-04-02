@@ -1346,24 +1346,66 @@ function panelHtml(): string {
   <style>
     body {
       font-family: var(--vscode-font-family);
-      padding: 12px;
+      padding: 10px;
       color: var(--vscode-foreground);
       background: var(--vscode-editor-background);
     }
-    h3 { margin-bottom: 10px; }
-    .meta {
+    h3 {
+      margin: 0 0 8px 0;
+      font-size: 13px;
+      opacity: 0.9;
+    }
+    .app-shell {
+      display: grid;
+      gap: 10px;
+    }
+    .top-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 10px;
+      padding: 10px;
+      background: var(--vscode-sideBar-background);
+    }
+    .top-status {
+      display: grid;
+      gap: 4px;
+    }
+    .top-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .top-actions {
       display: flex;
       gap: 8px;
       align-items: center;
-      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .top-actions > button {
+      opacity: 0.8;
+    }
+    .top-actions > button:hover {
+      opacity: 1;
+    }
+    .status-text {
       opacity: 0.9;
       font-size: 12px;
-      flex-wrap: wrap;
+    }
+    .status-hint {
+      opacity: 0.76;
+      font-size: 11px;
     }
     .status {
       padding: 4px 8px;
       border-radius: 999px;
       border: 1px solid var(--vscode-panel-border);
+      font-size: 12px;
+      font-weight: 600;
     }
     .status.ok {
       border-color: var(--vscode-testing-iconPassed);
@@ -1373,86 +1415,399 @@ function panelHtml(): string {
       border-color: var(--vscode-testing-iconFailed);
       color: var(--vscode-testing-iconFailed);
     }
+    .primary {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border-color: var(--vscode-button-border, transparent);
+    }
+    .layout-middle {
+      display: grid;
+      grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr);
+      gap: 8px;
+    }
     .panel {
       border: 1px solid var(--vscode-panel-border);
-      border-radius: 8px;
-      padding: 10px;
-      margin-bottom: 10px;
+      border-radius: 10px;
+      padding: 8px;
+      background: var(--vscode-editor-background);
     }
     .panel-title {
       font-weight: 600;
+      margin-bottom: 6px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      opacity: 0.82;
+    }
+    .composer-panel {
+      padding: 12px;
+      border-radius: 12px;
+    }
+    .composer-subtitle {
+      font-size: 12px;
+      opacity: 0.8;
       margin-bottom: 8px;
     }
-    .runtime-details {
-      margin-bottom: 10px;
-    }
-    .runtime-details > summary,
+    .runtime-menu > summary,
     details > summary {
       cursor: pointer;
       font-weight: 600;
+      font-size: 12px;
+    }
+    .runtime-menu {
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 8px;
+      padding: 2px 8px;
     }
     #serverStatus {
       margin-top: 8px;
-      margin-bottom: 6px;
       white-space: pre-wrap;
       font-size: 12px;
       opacity: 0.9;
     }
     #buildStatus {
-      margin-bottom: 8px;
+      margin-top: 6px;
       white-space: pre-wrap;
       font-size: 12px;
       opacity: 0.9;
     }
     .task-shell {
-      min-height: 140px;
+      min-height: 208px;
     }
     .task-empty {
       border: 1px dashed var(--vscode-panel-border);
       border-radius: 8px;
-      padding: 12px;
-      opacity: 0.8;
+      padding: 16px 12px;
+      opacity: 0.84;
       font-size: 12px;
+      text-align: center;
+      line-height: 1.45;
+      background: var(--vscode-sideBar-background);
     }
     #history {
       max-height: 40vh;
       overflow: auto;
     }
     #actionLog {
-      max-height: 160px;
+      max-height: 200px;
       overflow: auto;
       font-size: 12px;
     }
-    .entry, .log-entry {
+    .task-card,
+    .log-entry {
       border: 1px solid var(--vscode-panel-border);
-      border-radius: 6px;
+      border-radius: 8px;
       padding: 8px;
-      margin-bottom: 8px;
+      margin-bottom: 6px;
       background: var(--vscode-editor-background);
     }
-    .prompt { font-weight: 600; margin-bottom: 6px; white-space: pre-wrap; }
-    .reply { white-space: pre-wrap; margin-bottom: 8px; }
-    .entry-actions { display: flex; justify-content: flex-end; gap: 8px; }
-    .row { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
-    input {
+    .task-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .task-title {
+      font-weight: 600;
+      white-space: pre-wrap;
+      margin-bottom: 4px;
+      line-height: 1.35;
+    }
+    .task-status {
+      font-size: 12px;
+      opacity: 0.78;
+    }
+    .task-confidence {
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+      opacity: 0.82;
+    }
+    .task-route {
+      font-size: 11px;
+      margin-bottom: 6px;
+      opacity: 0.56;
+      word-break: break-word;
+    }
+    .reply {
+      white-space: pre-wrap;
+      margin-bottom: 6px;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .next-step {
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 8px;
+      padding: 6px 8px;
+      font-size: 12px;
+      background: var(--vscode-sideBar-background);
+      margin-bottom: 6px;
+    }
+    .task-card .next-step {
+      margin-top: 2px;
+    }
+    .entry-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .task-card .entry-actions button {
+      opacity: 0.82;
+    }
+    .task-card .entry-actions button.primary,
+    .task-card .entry-actions button:hover {
+      opacity: 1;
+    }
+    .progress-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 4px;
+      margin-bottom: 6px;
+    }
+    .progress-stage {
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 6px;
+      padding: 4px 6px;
+      font-size: 11px;
+      text-align: center;
+      opacity: 0.62;
+      background: var(--vscode-sideBar-background);
+    }
+    .progress-stage.upcoming {
+      opacity: 0.5;
+      border-style: dashed;
+    }
+    .progress-stage.complete {
+      border-color: var(--vscode-focusBorder);
+      color: var(--vscode-foreground);
+      background: var(--vscode-editor-background);
+      opacity: 0.9;
+    }
+    .progress-stage.active {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border-color: var(--vscode-button-border, transparent);
+      opacity: 1;
+    }
+    .progress-stage.failed {
+      border-color: var(--vscode-testing-iconFailed);
+      color: var(--vscode-testing-iconFailed);
+      opacity: 1;
+    }
+    .activity-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 6px;
+      opacity: 0.66;
+    }
+    .activity-list {
+      display: grid;
+      gap: 3px;
+      margin-bottom: 6px;
+    }
+    .activity-item {
+      padding: 2px 0;
+      font-size: 11px;
+      opacity: 0.82;
+    }
+    .task-card.done .reply {
+      font-size: 11px;
+      line-height: 1.35;
+      margin-bottom: 4px;
+      opacity: 0.88;
+    }
+    .task-card.done .activity-list {
+      gap: 2px;
+      margin-bottom: 4px;
+    }
+    .task-card.done .next-step {
+      font-size: 11px;
+      opacity: 0.86;
+    }
+    .failure-card {
+      border: 1px solid var(--vscode-testing-iconFailed);
+      border-radius: 8px;
+      padding: 6px 8px;
+      margin-bottom: 8px;
+      font-size: 12px;
+    }
+    .branch-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .branch-actions button,
+    .entry-actions button,
+    .quick-actions button,
+    #railTools button {
+      padding: 6px 10px;
+      font-size: 12px;
+      opacity: 0.72;
+    }
+    .branch-actions button:hover,
+    .entry-actions button:hover,
+    .quick-actions button:hover,
+    #railTools button:hover {
+      opacity: 1;
+    }
+    .row {
+      margin-top: 6px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    textarea {
       flex: 1;
-      min-width: 220px;
+      width: 100%;
       background: var(--vscode-input-background);
       color: var(--vscode-input-foreground);
       border: 1px solid var(--vscode-input-border);
-      padding: 8px;
-      border-radius: 4px;
+      padding: 10px;
+      border-radius: 8px;
+      min-height: 104px;
+      font-family: var(--vscode-font-family);
+      resize: vertical;
     }
     button {
       padding: 8px 12px;
-      border: 1px solid var(--vscode-button-border, transparent);
-      background: var(--vscode-button-background);
-      color: var(--vscode-button-foreground);
+      border: 1px solid var(--vscode-panel-border);
+      background: var(--vscode-editor-background);
+      color: var(--vscode-foreground);
       border-radius: 4px;
       cursor: pointer;
     }
-    #recent { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
-    .chip { font-size: 12px; padding: 4px 8px; }
+    button:hover {
+      border-color: var(--vscode-focusBorder);
+    }
+    #recent {
+      margin-top: 6px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding-top: 4px;
+      border-top: 1px dashed var(--vscode-panel-border);
+    }
+    #railRecent {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding-top: 4px;
+      border-top: 1px dashed var(--vscode-panel-border);
+    }
+    .chip {
+      font-size: 11px;
+      padding: 4px 8px;
+      opacity: 0.68;
+      background: var(--vscode-sideBar-background);
+      border-style: dashed;
+    }
+    .quick-actions button {
+      opacity: 0.66;
+    }
+    .right-rail {
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 10px;
+      padding: 8px;
+      background: var(--vscode-editor-background);
+    }
+    .rail-tabs {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    .rail-tab {
+      padding: 6px 8px;
+      font-size: 11px;
+      border-radius: 8px;
+      border: 1px solid var(--vscode-panel-border);
+      background: var(--vscode-sideBar-background);
+      color: var(--vscode-foreground);
+      opacity: 0.8;
+    }
+    .rail-tab.active {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border-color: var(--vscode-button-background);
+      opacity: 1;
+    }
+    .rail-pane {
+      display: none;
+      font-size: 12px;
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 8px;
+      padding: 8px;
+      background: var(--vscode-sideBar-background);
+    }
+    .rail-pane.active {
+      display: block;
+    }
+    .lower-sections {
+      display: grid;
+      gap: 8px;
+    }
+    .lower-sections details {
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 10px;
+      padding: 6px 8px;
+      background: var(--vscode-editor-background);
+    }
+    .secondary-diagnostics {
+      font-size: 11px;
+      opacity: 0.72;
+      line-height: 1.4;
+      border: 1px dashed var(--vscode-panel-border);
+      border-radius: 8px;
+      padding: 6px 8px;
+      background: var(--vscode-editor-background);
+      margin-bottom: 6px;
+    }
+    @media (max-width: 980px) {
+      .layout-middle {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .right-rail {
+        order: 3;
+      }
+      .main-col {
+        order: 2;
+      }
+      .rail-tabs {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+    @media (max-width: 640px) {
+      .top-bar {
+        padding: 8px;
+      }
+      .status-text {
+        display: none;
+      }
+      .progress-strip {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .entry-actions {
+        justify-content: flex-start;
+      }
+    }
+    .diagnostic-hint {
+      font-size: 12px;
+      margin-bottom: 8px;
+      opacity: 0.72;
+    }
+    .empty-state-strong {
+      font-size: 12px;
+      font-weight: 600;
+      opacity: 0.88;
+      margin-bottom: 4px;
+    }
     .log-kind {
       font-weight: 600;
       margin-right: 6px;
@@ -1465,50 +1820,103 @@ function panelHtml(): string {
 </head>
 <body>
   <h3>aicode Chat Panel</h3>
-  <div class="meta">
-    <span id="runtimePill" class="status warn">Runtime: attention needed</span>
-    <span>Task-first view: compose, track current task, then review history.</span>
-  </div>
-  <details class="runtime-details">
-    <summary>Runtime details</summary>
-    <div id="serverStatus">Server status unknown</div>
-    <div id="buildStatus">Extension build unknown</div>
-    <div class="row">
-      <button id="health">Check API</button>
-      <button id="startServer">Start Server</button>
-      <button id="restart">Restart Server</button>
-      <button id="stopServer">Stop Server</button>
-      <button id="runTask">Run Task</button>
+  <div class="app-shell">
+    <div class="top-bar">
+      <div class="top-meta">
+        <span id="runtimePill" class="status warn">Runtime: attention needed</span>
+        <div class="top-status">
+          <span class="status-text">Intent → Plan → Progress → Outcome</span>
+          <span id="runtimeHint" class="status-hint">Recommended next step: Check Runtime, then open Runtime Details if issues persist.</span>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button id="health">Check Runtime</button>
+        <details class="runtime-menu">
+          <summary>Runtime & Server</summary>
+          <div class="row">
+            <button id="startServer">Start Server</button>
+            <button id="restart">Restart Server</button>
+            <button id="stopServer">Stop Server</button>
+            <button id="runTask">Run Task</button>
+          </div>
+        </details>
+      </div>
     </div>
-  </details>
 
-  <div class="panel">
-    <div class="panel-title">Composer</div>
-    <div class="row">
-      <input id="prompt" placeholder="Ask for status, repo summary, or a code change" />
-      <button id="send">Send</button>
+    <div class="layout-middle">
+      <div class="main-col">
+        <div class="panel composer-panel">
+          <div class="panel-title">Request Composer</div>
+          <div class="composer-subtitle">Describe the feature, bug, or refactor goal. Keep it specific to one outcome.</div>
+          <div class="row">
+            <textarea id="prompt" placeholder="What do you want to build or fix? Include one goal, file, or acceptance target."></textarea>
+          </div>
+          <div class="row">
+            <button id="send" class="primary">Run Request</button>
+          </div>
+          <div class="row quick-actions">
+            <button id="editFile">Edit File</button>
+            <button id="editSelection">Edit Selection</button>
+            <button id="inlineChat">Inline Chat</button>
+          </div>
+          <div id="recent"></div>
+        </div>
+
+        <div class="panel task-shell">
+          <div class="panel-title">Current Task</div>
+          <div id="currentTask" class="task-empty">No active task yet. Send a request to begin.</div>
+        </div>
+      </div>
+
+      <div class="right-rail">
+        <div class="panel-title">Right Rail</div>
+        <div class="rail-tabs" id="railTabs">
+          <button class="rail-tab active" data-tab="chat">Chat</button>
+          <button class="rail-tab" data-tab="tools">Tools</button>
+          <button class="rail-tab" data-tab="diagnostics">Diagnostics</button>
+          <button class="rail-tab" data-tab="todos">Todos</button>
+        </div>
+        <div id="railChat" class="rail-pane active">
+          <div class="diagnostic-hint">Recent prompts and retry chips stay here for quick replay.</div>
+          <div id="railRecent"></div>
+        </div>
+        <div id="railTools" class="rail-pane">
+          <div class="diagnostic-hint">Secondary actions for editor operations.</div>
+          <div class="empty-state-strong">No extra tool action needed for most requests.</div>
+          <div class="row">
+            <button id="railEditFile">Edit File</button>
+            <button id="railEditSelection">Edit Selection</button>
+            <button id="railInlineChat">Inline Chat</button>
+          </div>
+        </div>
+        <div id="railDiagnostics" class="rail-pane">
+          <div class="diagnostic-hint">Primary diagnostics stream (detailed events) for current debugging.</div>
+          <div id="actionLog"></div>
+        </div>
+        <div id="railTodos" class="rail-pane">
+          <div class="empty-state-strong">No pending follow-up tasks for this run.</div>
+          <div class="diagnostic-hint">Task follow-ups will appear here as this run model expands.</div>
+        </div>
+      </div>
     </div>
-    <div class="row">
-      <button id="editFile">Edit File</button>
-      <button id="editSelection">Edit Selection</button>
-      <button id="inlineChat">Inline Chat</button>
+
+    <div class="lower-sections">
+      <details open>
+        <summary>History</summary>
+        <div id="history"></div>
+      </details>
+      <details id="diagnosticsDetails">
+        <summary>Diagnostics Summary</summary>
+        <div class="secondary-diagnostics">Summary only: latest runtime/system snapshot and concise status. For full event-by-event diagnostics, use the Diagnostics tab in the right rail.</div>
+        <div id="diagnosticsMirror"></div>
+      </details>
+      <details>
+        <summary>Runtime Details</summary>
+        <div id="serverStatus">Server status unknown</div>
+        <div id="buildStatus">Extension build unknown</div>
+      </details>
     </div>
-    <div id="recent"></div>
   </div>
-
-  <div class="panel task-shell">
-    <div class="panel-title">Current Task</div>
-    <div id="currentTask" class="task-empty">No active task yet. Send a command to start one.</div>
-    <details>
-      <summary>Diagnostics</summary>
-      <div id="actionLog"></div>
-    </details>
-  </div>
-
-  <details class="panel" open>
-    <summary>History</summary>
-    <div id="history"></div>
-  </details>
 
   <script>
     const __aicodeBoot = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : undefined;
@@ -1520,7 +1928,6 @@ function panelHtml(): string {
           __aicodeBoot.postMessage({ type, ...(extra || {}) });
         }
       } catch {
-        // Ignore bootstrap reporting failures.
       }
     }
 
@@ -1551,383 +1958,614 @@ function panelHtml(): string {
     }
 
     function startPanel() {
-    if (__aicodeStarted) {
-      return;
-    }
-    __aicodeStarted = true;
-    try {
-    // Reuse the already-acquired API instance — acquireVsCodeApi() can only be called once.
-    const vscode = __aicodeBoot;
-    const currentTask = document.getElementById('currentTask');
-    const historyList = document.getElementById('history');
-    const recent = document.getElementById('recent');
-    const actionLog = document.getElementById('actionLog');
-    const input = document.getElementById('prompt');
-    const runtimePill = document.getElementById('runtimePill');
-    const send = document.getElementById('send');
-    const health = document.getElementById('health');
-    const startServer = document.getElementById('startServer');
-    const restart = document.getElementById('restart');
-    const stopServer = document.getElementById('stopServer');
-    const runTask = document.getElementById('runTask');
-    const editFile = document.getElementById('editFile');
-    const editSelection = document.getElementById('editSelection');
-    const inlineChat = document.getElementById('inlineChat');
-    const serverStatus = document.getElementById('serverStatus');
-    const buildStatus = document.getElementById('buildStatus');
-    const state = vscode.getState() || { commands: [] };
-    let commandHistory = Array.isArray(state.commands) ? state.commands : [];
-    const activeEntries = new Map();
-    let currentTaskId = null;
-
-    function shouldOfferApply(action, command, response) {
-      const lowerAction = String(action || '').toLowerCase();
-      const lowerCommand = String(command || '').toLowerCase();
-      const lowerResponse = String(response || '').toLowerCase();
-      if (['edit', 'autofix', 'self_improve_apply'].includes(lowerAction)) {
-        return true;
+      if (__aicodeStarted) {
+        return;
       }
-      return ['edit', 'fix', 'rewrite', 'refactor', 'apply patch', 'change'].some((token) => lowerCommand.includes(token))
-        || ['patch', 'diff', 'applied changes', 'edit preview'].some((token) => lowerResponse.includes(token));
-    }
+      __aicodeStarted = true;
+      try {
+        const vscode = __aicodeBoot;
+        const currentTask = document.getElementById('currentTask');
+        const historyList = document.getElementById('history');
+        const recent = document.getElementById('recent');
+        const railRecent = document.getElementById('railRecent');
+        const actionLog = document.getElementById('actionLog');
+        const diagnosticsMirror = document.getElementById('diagnosticsMirror');
+        const diagnosticsDetails = document.getElementById('diagnosticsDetails');
+        const input = document.getElementById('prompt');
+        const runtimePill = document.getElementById('runtimePill');
+        const runtimeHint = document.getElementById('runtimeHint');
+        const send = document.getElementById('send');
+        const health = document.getElementById('health');
+        const startServer = document.getElementById('startServer');
+        const restart = document.getElementById('restart');
+        const stopServer = document.getElementById('stopServer');
+        const runTask = document.getElementById('runTask');
+        const editFile = document.getElementById('editFile');
+        const editSelection = document.getElementById('editSelection');
+        const inlineChat = document.getElementById('inlineChat');
+        const railEditFile = document.getElementById('railEditFile');
+        const railEditSelection = document.getElementById('railEditSelection');
+        const railInlineChat = document.getElementById('railInlineChat');
+        const serverStatus = document.getElementById('serverStatus');
+        const buildStatus = document.getElementById('buildStatus');
+        const railTabs = document.querySelectorAll('.rail-tab');
+        const railPanes = {
+          chat: document.getElementById('railChat'),
+          tools: document.getElementById('railTools'),
+          diagnostics: document.getElementById('railDiagnostics'),
+          todos: document.getElementById('railTodos'),
+        };
 
-    function inferNextStep(action, response, explicitNextStep) {
-      const explicit = String(explicitNextStep || '').trim();
-      if (explicit) {
-        return explicit;
-      }
-      const text = String(response || '');
-      const lower = text.toLowerCase();
-      const marker = 'if you want, i can';
-      const index = lower.indexOf(marker);
-      if (index >= 0) {
-        const candidate = text.slice(index).split('\\n')[0].trim();
-        if (candidate) {
-          return candidate;
+        const state = vscode.getState() || { commands: [] };
+        let commandHistory = Array.isArray(state.commands) ? state.commands : [];
+        const activeEntries = new Map();
+        const historyIds = [];
+        let currentTaskId = null;
+
+        function switchRightRailTab(nextTab) {
+          for (const tab of railTabs) {
+            tab.classList.toggle('active', tab.dataset.tab === nextTab);
+          }
+          for (const [name, node] of Object.entries(railPanes)) {
+            if (node) {
+              node.classList.toggle('active', name === nextTab);
+            }
+          }
         }
-      }
-      const fallback = {
-        status: 'If you want, I can run full status validation next.',
-        repo_summary: 'If you want, I can drill into architecture, tests, or risks next.',
-        help_summary: 'If you want, I can implement one concrete improvement next.',
-        research: 'If you want, I can patch one likely file from this research next.',
-      };
-      return fallback[String(action || '').toLowerCase()] || 'If you want, I can clarify and take the next step.';
-    }
 
-    function rememberCommand(command) {
-      const next = [command, ...commandHistory.filter((item) => item !== command)];
-      commandHistory = next.slice(0, 8);
-      vscode.setState({ commands: commandHistory });
-      renderRecent();
-    }
-
-    function renderRecent() {
-      recent.innerHTML = '';
-      for (const command of commandHistory) {
-        const button = document.createElement('button');
-        button.className = 'chip';
-        button.textContent = 'Retry: ' + command;
-        button.title = command;
-        button.addEventListener('click', () => submit(command));
-        recent.appendChild(button);
-      }
-    }
-
-    function renderActionLog(entries) {
-      actionLog.innerHTML = '';
-      if (!Array.isArray(entries) || !entries.length) {
-        const empty = document.createElement('div');
-        empty.className = 'log-entry';
-        empty.textContent = 'No actions yet.';
-        actionLog.appendChild(empty);
-        return;
-      }
-      for (const entry of entries) {
-        const row = document.createElement('div');
-        row.className = 'log-entry';
-
-        const stamp = document.createElement('span');
-        stamp.className = 'timestamp';
-        stamp.textContent = new Date(entry.timestamp).toLocaleTimeString();
-
-        const kind = document.createElement('span');
-        kind.className = 'log-kind';
-        kind.textContent = '[' + entry.kind + ']';
-
-        const message = document.createElement('span');
-        message.textContent = entry.message;
-
-        row.appendChild(stamp);
-        row.appendChild(kind);
-        row.appendChild(message);
-        actionLog.appendChild(row);
-      }
-    }
-
-    function formatBuildLine(build) {
-      if (!build) {
-        return 'Loaded extension build: unavailable';
-      }
-      return 'Loaded extension: v'
-        + String(build.version || 'unknown')
-        + ' [' + String(build.runtime_mode || 'unknown') + '] '
-        + String(build.git_commit || 'unknown').slice(0, 12)
-        + ' built ' + String(build.built_at || 'unknown');
-    }
-
-    function formatServerRuntime(runtime) {
-      if (!runtime) {
-        return '';
-      }
-      return 'Server runtime: v'
-        + String(runtime.app_version || 'unknown')
-        + ' / routing ' + String(runtime.routing_generation || 'unknown')
-        + ' / commit ' + String(runtime.git_commit || 'unknown');
-    }
-
-    function formatBuildDetails(status) {
-      if (!status) {
-        return 'Extension build details unavailable.';
-      }
-      const lines = [formatBuildLine(status.extensionBuild)];
-      const runtimeLine = formatServerRuntime(status.serverRuntime);
-      if (runtimeLine) {
-        lines.push(runtimeLine);
-      }
-      if (status.workspaceBuildComparison && status.workspaceBuildComparison.detail) {
-        lines.push(status.workspaceBuildComparison.detail);
-      }
-      if (status.integrityIssue) {
-        lines.push('Extension integrity: ' + status.integrityIssue);
-      }
-      return lines.join('\\n');
-    }
-
-    function setServerStatus(status, runtimeLabel) {
-      if (!status) {
-        return;
-      }
-      const statusText = status.detail || status.text || 'Server status unknown';
-      if (serverStatus) {
-        serverStatus.textContent = statusText;
-      }
-      if (buildStatus) {
-        buildStatus.textContent = formatBuildDetails(status);
-      }
-      if (runtimePill) {
-        runtimePill.textContent = runtimeLabel || (status.healthy ? 'Runtime: healthy' : 'Runtime: attention needed');
-        runtimePill.classList.toggle('ok', Boolean(status.healthy));
-        runtimePill.classList.toggle('warn', !status.healthy);
-      }
-    }
-
-    function moveCurrentToHistory() {
-      if (!currentTaskId || !activeEntries.has(currentTaskId)) {
-        return;
-      }
-      const previous = activeEntries.get(currentTaskId);
-      if (previous && previous.card && historyList) {
-        historyList.prepend(previous.card);
-      }
-    }
-
-    function ensureEntry(id, command) {
-      if (activeEntries.has(id)) {
-        return activeEntries.get(id);
-      }
-
-      moveCurrentToHistory();
-
-      const card = document.createElement('div');
-      card.className = 'entry';
-
-      const prompt = document.createElement('div');
-      prompt.className = 'prompt';
-      prompt.textContent = '> ' + command;
-
-      const meta = document.createElement('div');
-      meta.className = 'meta';
-
-      const reply = document.createElement('div');
-      reply.className = 'reply';
-      reply.textContent = '';
-
-      const actions = document.createElement('div');
-      actions.className = 'entry-actions';
-
-      const retry = document.createElement('button');
-      retry.textContent = 'Retry';
-      retry.addEventListener('click', () => submit(command));
-      actions.appendChild(retry);
-
-      const clarify = document.createElement('button');
-      clarify.textContent = 'Clarify';
-      clarify.addEventListener('click', () => submit('clarify this request: ' + command));
-      actions.appendChild(clarify);
-
-      const apply = document.createElement('button');
-      apply.textContent = 'Apply suggested edit';
-      apply.style.display = 'none';
-      apply.addEventListener('click', () => vscode.postMessage({ type: 'editCurrentFile' }));
-      actions.appendChild(apply);
-
-      card.appendChild(prompt);
-      card.appendChild(meta);
-      card.appendChild(reply);
-      card.appendChild(actions);
-
-      currentTask.innerHTML = '';
-      currentTask.className = '';
-      currentTask.appendChild(card);
-
-      const entry = { card, meta, reply, apply };
-      activeEntries.set(id, entry);
-      currentTaskId = id;
-      return entry;
-    }
-
-    function finalizeEntry(id, command, action, confidence, response, nextStep) {
-      const entry = ensureEntry(id, command);
-      entry.meta.textContent = '[action=' + String(action || 'unknown') + ', confidence=' + Number(confidence || 0) + ']';
-      const suggestion = inferNextStep(action, response, nextStep);
-      entry.reply.textContent = String(response || '(no response)') + '\\n\\nNext: ' + suggestion;
-      entry.apply.style.display = shouldOfferApply(action, command, response) ? 'inline-block' : 'none';
-    }
-
-    function appendEntry(command, body) {
-      const id = 'entry-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
-      const entry = ensureEntry(id, command);
-      entry.reply.textContent = body;
-    }
-
-    function setEntryMeta(id, command, text) {
-      const entry = ensureEntry(id, command);
-      entry.meta.textContent = text || '';
-    }
-
-    function setEntryBody(id, command, body) {
-      const entry = ensureEntry(id, command);
-      entry.reply.textContent = body;
-      if (historyList) {
-        historyList.scrollTop = historyList.scrollHeight;
-      }
-    }
-
-    function appendToEntry(id, command, chunk) {
-      const entry = ensureEntry(id, command);
-      entry.reply.textContent += chunk;
-    }
-
-    function submit(commandOverride) {
-      const value = typeof commandOverride === 'string' ? commandOverride : input.value.trim();
-      if (!value) {
-        return;
-      }
-      rememberCommand(value);
-      const requestId = 'req-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
-      vscode.postMessage({ type: 'ask', command: value, requestId });
-      if (!commandOverride) {
-        input.value = '';
-      }
-      input.focus();
-    }
-
-    send.addEventListener('click', submit);
-    health.addEventListener('click', () => vscode.postMessage({ type: 'health' }));
-    startServer.addEventListener('click', () => vscode.postMessage({ type: 'startServer' }));
-    restart.addEventListener('click', () => vscode.postMessage({ type: 'restartServer' }));
-    stopServer.addEventListener('click', () => vscode.postMessage({ type: 'stopServer' }));
-    runTask.addEventListener('click', () => vscode.postMessage({ type: 'runWorkspaceTask' }));
-    editFile.addEventListener('click', () => vscode.postMessage({ type: 'editCurrentFile' }));
-    editSelection.addEventListener('click', () => vscode.postMessage({ type: 'editSelection' }));
-    inlineChat.addEventListener('click', () => vscode.postMessage({ type: 'inlineChat' }));
-    input.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') {
-        submit();
-      }
-    });
-
-    window.addEventListener('message', (event) => {
-      const msg = event.data;
-      if (msg.type === 'init') {
-        renderActionLog(msg.entries || []);
-        setServerStatus(msg.status, msg.runtimeLabel);
-      }
-      if (msg.type === 'result') {
-        const requestId = msg.requestId || ('req-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7));
-        finalizeEntry(
-          requestId,
-          msg.command || 'unknown',
-          msg.action,
-          msg.confidence,
-          msg.response,
-          msg.next_step,
-        );
-      }
-      if (msg.type === 'error') {
-        if (msg.requestId) {
-          finalizeEntry(
-            msg.requestId,
-            msg.command || 'unknown',
-            'error',
-            0,
-            'ERROR: ' + msg.message,
-            'If you want, I can retry or clarify this request next.',
-          );
-        } else {
-          appendEntry(msg.command || 'unknown', 'ERROR: ' + msg.message);
+        function shouldOfferApply(action, command, response) {
+          const lowerAction = String(action || '').toLowerCase();
+          const lowerCommand = String(command || '').toLowerCase();
+          const lowerResponse = String(response || '').toLowerCase();
+          if (['edit', 'autofix', 'self_improve_apply'].includes(lowerAction)) {
+            return true;
+          }
+          return ['edit', 'fix', 'rewrite', 'refactor', 'apply patch', 'change'].some((token) => lowerCommand.includes(token))
+            || ['patch', 'diff', 'applied changes', 'edit preview'].some((token) => lowerResponse.includes(token));
         }
-      }
-      if (msg.type === 'health') {
-        appendEntry('health', msg.message);
-      }
-      if (msg.type === 'streamStart') {
-        ensureEntry(msg.requestId, msg.command || 'unknown');
-        setEntryMeta(msg.requestId, msg.command || 'unknown', 'Routing request...');
-      }
-      if (msg.type === 'streamRoute') {
-        setEntryMeta(
-          msg.requestId,
-          msg.command || 'unknown',
-          '[action=' + msg.action + ', confidence=' + msg.confidence + ']',
-        );
-      }
-      if (msg.type === 'streamDelta') {
-        appendToEntry(msg.requestId, msg.command || 'unknown', msg.chunk || '');
-      }
-      if (msg.type === 'streamDone') {
-        finalizeEntry(
-          msg.requestId,
-          msg.command || 'unknown',
-          msg.action,
-          msg.confidence,
-          msg.response,
-          msg.next_step,
-        );
-      }
-      if (msg.type === 'actionLog') {
-        renderActionLog(msg.entries || []);
-      }
-      if (msg.type === 'serverStatus') {
-        setServerStatus(msg.status, msg.runtimeLabel);
-      }
-      if (msg.type === 'prefillPrompt') {
-        if (input && msg.prompt) {
-          input.value = String(msg.prompt);
+
+        function inferNextStep(action, response, explicitNextStep) {
+          const explicit = String(explicitNextStep || '').trim();
+          if (explicit) {
+            return explicit;
+          }
+          const text = String(response || '');
+          const lower = text.toLowerCase();
+          const marker = 'if you want, i can';
+          const index = lower.indexOf(marker);
+          if (index >= 0) {
+            const candidate = text.slice(index).split('\\n')[0].trim();
+            if (candidate) {
+              return candidate;
+            }
+          }
+          const fallback = {
+            status: 'If you want, I can run full status validation next.',
+            repo_summary: 'If you want, I can drill into architecture, tests, or risks next.',
+            help_summary: 'If you want, I can implement one concrete improvement next.',
+            research: 'If you want, I can patch one likely file from this research next.',
+          };
+          return fallback[String(action || '').toLowerCase()] || 'If you want, I can clarify and take the next step.';
+        }
+
+        function rememberCommand(command) {
+          const next = [command, ...commandHistory.filter((item) => item !== command)];
+          commandHistory = next.slice(0, 8);
+          vscode.setState({ commands: commandHistory });
+          renderRecent();
+        }
+
+        function createRetryChip(command) {
+          const button = document.createElement('button');
+          button.className = 'chip';
+          button.textContent = 'Retry: ' + command;
+          button.title = command;
+          button.addEventListener('click', () => submit(command));
+          return button;
+        }
+
+        function renderRecent() {
+          if (recent) {
+            recent.innerHTML = '';
+          }
+          if (railRecent) {
+            railRecent.innerHTML = '';
+          }
+          for (const command of commandHistory) {
+            if (recent) {
+              recent.appendChild(createRetryChip(command));
+            }
+            if (railRecent) {
+              railRecent.appendChild(createRetryChip(command));
+            }
+          }
+        }
+
+        function renderActionLog(entries) {
+          actionLog.innerHTML = '';
+          if (diagnosticsMirror) {
+            diagnosticsMirror.innerHTML = '';
+          }
+          if (!Array.isArray(entries) || !entries.length) {
+            const empty = document.createElement('div');
+            empty.className = 'log-entry';
+            empty.textContent = 'No actions yet.';
+            actionLog.appendChild(empty);
+            if (diagnosticsMirror) {
+              const summary = document.createElement('div');
+              summary.className = 'secondary-diagnostics';
+              summary.textContent = 'No diagnostics yet. Open the Diagnostics tab in the right rail for detailed events.';
+              diagnosticsMirror.appendChild(summary);
+            }
+            return;
+          }
+          for (const entry of entries) {
+            const row = document.createElement('div');
+            row.className = 'log-entry';
+            const stamp = document.createElement('span');
+            stamp.className = 'timestamp';
+            stamp.textContent = new Date(entry.timestamp).toLocaleTimeString();
+            const kind = document.createElement('span');
+            kind.className = 'log-kind';
+            kind.textContent = '[' + entry.kind + ']';
+            const message = document.createElement('span');
+            message.textContent = entry.message;
+            row.appendChild(stamp);
+            row.appendChild(kind);
+            row.appendChild(message);
+            actionLog.appendChild(row);
+          }
+          if (diagnosticsMirror) {
+            const latest = entries[0];
+            const summary = document.createElement('div');
+            summary.className = 'secondary-diagnostics';
+            summary.textContent =
+              'Events captured: ' + String(entries.length)
+              + '. Latest: [' + String(latest.kind) + '] ' + String(latest.message)
+              + '. Open the Diagnostics tab for full event detail.';
+            diagnosticsMirror.appendChild(summary);
+          }
+        }
+
+        function formatBuildLine(build) {
+          if (!build) {
+            return 'Loaded extension build: unavailable';
+          }
+          return 'Loaded extension: v'
+            + String(build.version || 'unknown')
+            + ' [' + String(build.runtime_mode || 'unknown') + '] '
+            + String(build.git_commit || 'unknown').slice(0, 12)
+            + ' built ' + String(build.built_at || 'unknown');
+        }
+
+        function formatServerRuntime(runtime) {
+          if (!runtime) {
+            return '';
+          }
+          return 'Server runtime: v'
+            + String(runtime.app_version || 'unknown')
+            + ' / routing ' + String(runtime.routing_generation || 'unknown')
+            + ' / commit ' + String(runtime.git_commit || 'unknown');
+        }
+
+        function formatBuildDetails(status) {
+          if (!status) {
+            return 'Extension build details unavailable.';
+          }
+          const lines = [formatBuildLine(status.extensionBuild)];
+          const runtimeLine = formatServerRuntime(status.serverRuntime);
+          if (runtimeLine) {
+            lines.push(runtimeLine);
+          }
+          if (status.workspaceBuildComparison && status.workspaceBuildComparison.detail) {
+            lines.push(status.workspaceBuildComparison.detail);
+          }
+          if (status.integrityIssue) {
+            lines.push('Extension integrity: ' + status.integrityIssue);
+          }
+          return lines.join('\\n');
+        }
+
+        function setServerStatus(status, runtimeLabel) {
+          if (!status) {
+            return;
+          }
+          const statusText = status.detail || status.text || 'Server status unknown';
+          if (serverStatus) {
+            serverStatus.textContent = statusText;
+          }
+          if (buildStatus) {
+            buildStatus.textContent = formatBuildDetails(status);
+          }
+          if (runtimePill) {
+            runtimePill.textContent = runtimeLabel || (status.healthy ? 'Runtime: healthy' : 'Runtime: attention needed');
+            runtimePill.classList.toggle('ok', Boolean(status.healthy));
+            runtimePill.classList.toggle('warn', !status.healthy);
+          }
+          if (runtimeHint) {
+            runtimeHint.textContent = status.healthy
+              ? 'Recommended next step: Run Request.'
+              : 'Recommended next step: Check Runtime, then review Runtime Details and Diagnostics if the issue continues.';
+          }
+        }
+
+        function baseEntry(id, command) {
+          return {
+            id,
+            command,
+            action: 'pending',
+            confidence: 0,
+            response: '',
+            status: 'Intent understood',
+            nextStep: '',
+            applyVisible: false,
+            stage: 'intent',
+            failed: false,
+            failureMessage: '',
+            events: [],
+          };
+        }
+
+        function moveCurrentToHistory() {
+          if (!currentTaskId || !activeEntries.has(currentTaskId)) {
+            return;
+          }
+          if (!historyIds.includes(currentTaskId)) {
+            historyIds.unshift(currentTaskId);
+          }
+        }
+
+        function ensureEntry(id, command) {
+          if (activeEntries.has(id)) {
+            return activeEntries.get(id);
+          }
+          moveCurrentToHistory();
+          const entry = baseEntry(id, command);
+          activeEntries.set(id, entry);
+          currentTaskId = id;
+          renderCurrentTask();
+          renderHistory();
+          return entry;
+        }
+
+        function addTaskEvent(id, command, kind, message) {
+          const entry = ensureEntry(id, command);
+          const row = { kind: String(kind || 'event'), message: String(message || ''), time: new Date().toLocaleTimeString() };
+          entry.events.unshift(row);
+          if (entry.events.length > 12) {
+            entry.events.length = 12;
+          }
+          renderCurrentTask();
+        }
+
+        function stageIndex(stage) {
+          const map = { intent: 0, plan: 1, execute: 2, verify: 3, done: 4, failed: 3 };
+          return map[stage] ?? 0;
+        }
+
+        function createProgressStrip(entry) {
+          const strip = document.createElement('div');
+          strip.className = 'progress-strip';
+          const labels = ['Intent', 'Plan', 'Execute', 'Verify'];
+          const idx = stageIndex(entry.stage);
+          labels.forEach((label, i) => {
+            const cell = document.createElement('div');
+            cell.className = 'progress-stage';
+            if (idx > i || entry.stage === 'done') {
+              cell.classList.add('complete');
+            } else if (idx === i) {
+              cell.classList.add('active');
+            } else {
+              cell.classList.add('upcoming');
+            }
+            if (entry.failed && i === 3) {
+              cell.classList.add('failed');
+            }
+            cell.textContent = label;
+            strip.appendChild(cell);
+          });
+          return strip;
+        }
+
+        function createTaskCard(entry, includeBody = true) {
+          const card = document.createElement('div');
+          card.className = 'task-card';
+          if (entry.stage === 'done') {
+            card.classList.add('done');
+          }
+
+          const header = document.createElement('div');
+          header.className = 'task-header';
+          const titleWrap = document.createElement('div');
+          const title = document.createElement('div');
+          title.className = 'task-title';
+          title.textContent = entry.command || 'Task';
+          const status = document.createElement('div');
+          status.className = 'task-status';
+          status.textContent = entry.status || 'Waiting for input';
+          titleWrap.appendChild(title);
+          titleWrap.appendChild(status);
+          const confidence = document.createElement('div');
+          confidence.className = 'task-confidence';
+          confidence.textContent = Math.round(Number(entry.confidence || 0) * 100) + '% confidence';
+          header.appendChild(titleWrap);
+          header.appendChild(confidence);
+          card.appendChild(header);
+
+          const route = document.createElement('div');
+          route.className = 'task-route';
+          route.textContent = 'Route: ' + String(entry.action || 'pending') + ' · Full runtime details below';
+          card.appendChild(route);
+          card.appendChild(createProgressStrip(entry));
+
+          if (includeBody) {
+            const reply = document.createElement('div');
+            reply.className = 'reply';
+            reply.textContent = entry.response || 'Working...';
+            card.appendChild(reply);
+          }
+
+          if (entry.events.length) {
+            const titleNode = document.createElement('div');
+            titleNode.className = 'activity-title';
+            titleNode.textContent = 'Task activity';
+            card.appendChild(titleNode);
+            const activity = document.createElement('div');
+            activity.className = 'activity-list';
+            for (const item of entry.events.slice(0, 5)) {
+              const row = document.createElement('div');
+              row.className = 'activity-item';
+              row.textContent = item.message || ('[' + item.kind + ']');
+              activity.appendChild(row);
+            }
+            card.appendChild(activity);
+          }
+
+          const nextStep = document.createElement('div');
+          nextStep.className = 'next-step';
+          nextStep.textContent = 'Next: ' + inferNextStep(entry.action, entry.response, entry.nextStep);
+          card.appendChild(nextStep);
+
+          if (entry.failed) {
+            const failure = document.createElement('div');
+            failure.className = 'failure-card';
+            failure.textContent = entry.failureMessage || 'Validation failed. Choose a recovery path.';
+            const branches = document.createElement('div');
+            branches.className = 'branch-actions';
+
+            const retrySame = document.createElement('button');
+            retrySame.textContent = 'Retry same path';
+            retrySame.addEventListener('click', () => submit(entry.command));
+
+            const switchResearch = document.createElement('button');
+            switchResearch.textContent = 'Switch to research';
+            switchResearch.addEventListener('click', () => submit('research ' + entry.command));
+
+            const clarify = document.createElement('button');
+            clarify.textContent = 'Clarify request';
+            clarify.addEventListener('click', () => submit('clarify this request: ' + entry.command));
+
+            const openDiag = document.createElement('button');
+            openDiag.textContent = 'Open diagnostics';
+            openDiag.addEventListener('click', () => {
+              switchRightRailTab('diagnostics');
+              if (diagnosticsDetails) {
+                diagnosticsDetails.open = true;
+              }
+            });
+
+            branches.appendChild(retrySame);
+            branches.appendChild(switchResearch);
+            branches.appendChild(clarify);
+            branches.appendChild(openDiag);
+            failure.appendChild(branches);
+            card.appendChild(failure);
+          }
+
+          const actions = document.createElement('div');
+          actions.className = 'entry-actions';
+
+          const retry = document.createElement('button');
+          retry.textContent = 'Retry';
+          retry.addEventListener('click', () => submit(entry.command));
+
+          const clarify = document.createElement('button');
+          clarify.textContent = 'Clarify';
+          clarify.addEventListener('click', () => submit('clarify this request: ' + entry.command));
+
+          const apply = document.createElement('button');
+          apply.textContent = 'Apply suggested edit';
+          apply.style.display = entry.applyVisible ? 'inline-block' : 'none';
+          apply.addEventListener('click', () => vscode.postMessage({ type: 'editCurrentFile' }));
+
+          actions.appendChild(retry);
+          actions.appendChild(clarify);
+          actions.appendChild(apply);
+          card.appendChild(actions);
+          return card;
+        }
+
+        function renderCurrentTask() {
+          if (!currentTask) {
+            return;
+          }
+          currentTask.innerHTML = '';
+          if (!currentTaskId || !activeEntries.has(currentTaskId)) {
+            currentTask.className = 'task-empty';
+            currentTask.textContent = 'Current Task will appear here once you run a request. Use the composer above to start one focused outcome.';
+            return;
+          }
+          currentTask.className = '';
+          currentTask.appendChild(createTaskCard(activeEntries.get(currentTaskId), true));
+        }
+
+        function renderHistory() {
+          if (!historyList) {
+            return;
+          }
+          historyList.innerHTML = '';
+          if (!historyIds.length) {
+            const empty = document.createElement('div');
+            empty.className = 'task-empty';
+            empty.textContent = 'No completed tasks yet.';
+            historyList.appendChild(empty);
+            return;
+          }
+          for (const id of historyIds) {
+            const entry = activeEntries.get(id);
+            if (entry) {
+              historyList.appendChild(createTaskCard(entry, false));
+            }
+          }
+        }
+
+        function finalizeEntry(id, command, action, confidence, response, nextStep) {
+          const entry = ensureEntry(id, command);
+          entry.action = String(action || 'unknown');
+          entry.confidence = Number(confidence || 0);
+          entry.response = String(response || '(no response)');
+          entry.nextStep = String(nextStep || '');
+          entry.status = 'Outcome ready';
+          entry.applyVisible = shouldOfferApply(action, command, response);
+          entry.stage = 'done';
+          entry.failed = false;
+          renderCurrentTask();
+          renderHistory();
+        }
+
+        function submit(commandOverride) {
+          const value = typeof commandOverride === 'string' ? commandOverride : input.value.trim();
+          if (!value) {
+            return;
+          }
+          rememberCommand(value);
+          const requestId = 'req-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+          vscode.postMessage({ type: 'ask', command: value, requestId });
+          if (!commandOverride) {
+            input.value = '';
+          }
           input.focus();
-          // Scroll input into view
-          input.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
-      }
-    });
 
-    postBootMessage('boot');
-    renderRecent();
-    setTimeout(() => vscode.postMessage({ type: 'ready' }), 0);
-    } catch (error) {
-      reportClientError(error);
-    }
+        send.addEventListener('click', submit);
+        health.addEventListener('click', () => vscode.postMessage({ type: 'health' }));
+        startServer.addEventListener('click', () => vscode.postMessage({ type: 'startServer' }));
+        restart.addEventListener('click', () => vscode.postMessage({ type: 'restartServer' }));
+        stopServer.addEventListener('click', () => vscode.postMessage({ type: 'stopServer' }));
+        runTask.addEventListener('click', () => vscode.postMessage({ type: 'runWorkspaceTask' }));
+        editFile.addEventListener('click', () => vscode.postMessage({ type: 'editCurrentFile' }));
+        editSelection.addEventListener('click', () => vscode.postMessage({ type: 'editSelection' }));
+        inlineChat.addEventListener('click', () => vscode.postMessage({ type: 'inlineChat' }));
+        railEditFile.addEventListener('click', () => vscode.postMessage({ type: 'editCurrentFile' }));
+        railEditSelection.addEventListener('click', () => vscode.postMessage({ type: 'editSelection' }));
+        railInlineChat.addEventListener('click', () => vscode.postMessage({ type: 'inlineChat' }));
+        for (const tab of railTabs) {
+          tab.addEventListener('click', () => switchRightRailTab(tab.dataset.tab));
+        }
+
+        input.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            submit();
+          }
+        });
+
+        window.addEventListener('message', (event) => {
+          const msg = event.data;
+          if (msg.type === 'init') {
+            renderActionLog(msg.entries || []);
+            setServerStatus(msg.status, msg.runtimeLabel);
+          }
+          if (msg.type === 'result') {
+            const requestId = msg.requestId || ('req-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7));
+            finalizeEntry(requestId, msg.command || 'unknown', msg.action, msg.confidence, msg.response, msg.next_step);
+          }
+          if (msg.type === 'error') {
+            if (msg.requestId) {
+              const entry = ensureEntry(msg.requestId, msg.command || 'unknown');
+              entry.failed = true;
+              entry.stage = 'failed';
+              entry.status = 'Needs recovery';
+              entry.failureMessage = 'Request failed: ' + String(msg.message || 'Unknown error');
+              entry.response = 'ERROR: ' + String(msg.message || 'Unknown error');
+              addTaskEvent(msg.requestId, msg.command || 'unknown', 'error', String(msg.message || 'Unknown error'));
+              renderCurrentTask();
+            } else {
+              const requestId = 'err-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+              const entry = ensureEntry(requestId, msg.command || 'unknown');
+              entry.failed = true;
+              entry.stage = 'failed';
+              entry.status = 'Needs recovery';
+              entry.failureMessage = 'Request failed: ' + String(msg.message || 'Unknown error');
+              entry.response = 'ERROR: ' + String(msg.message || 'Unknown error');
+              renderCurrentTask();
+            }
+          }
+          if (msg.type === 'health') {
+            const requestId = 'health-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+            finalizeEntry(requestId, 'health', 'status', 1, String(msg.message || ''), 'If you want, I can run another health check next.');
+          }
+          if (msg.type === 'streamStart') {
+            const entry = ensureEntry(msg.requestId, msg.command || 'unknown');
+            entry.stage = 'intent';
+            entry.status = 'Intent understood';
+            entry.response = '';
+            entry.failed = false;
+            addTaskEvent(msg.requestId, msg.command || 'unknown', 'intent', 'Intent captured');
+          }
+          if (msg.type === 'streamRoute') {
+            const entry = ensureEntry(msg.requestId, msg.command || 'unknown');
+            entry.action = String(msg.action || 'unknown');
+            entry.confidence = Number(msg.confidence || 0);
+            entry.stage = 'plan';
+            entry.status = 'Plan selected';
+            addTaskEvent(msg.requestId, msg.command || 'unknown', 'route', 'Routed to ' + entry.action);
+            renderCurrentTask();
+          }
+          if (msg.type === 'streamStatus') {
+            const entry = ensureEntry(msg.requestId, msg.command || 'unknown');
+            entry.stage = 'execute';
+            entry.status = String(msg.message || 'Executing');
+            addTaskEvent(msg.requestId, msg.command || 'unknown', 'status', entry.status);
+          }
+          if (msg.type === 'streamEvent') {
+            addTaskEvent(msg.requestId, msg.command || 'unknown', String(msg.kind || 'event'), String(msg.message || ''));
+          }
+          if (msg.type === 'streamDelta') {
+            const entry = ensureEntry(msg.requestId, msg.command || 'unknown');
+            entry.stage = 'execute';
+            entry.status = 'Executing';
+            entry.response += String(msg.chunk || '');
+            renderCurrentTask();
+          }
+          if (msg.type === 'streamDone') {
+            const entry = ensureEntry(msg.requestId, msg.command || 'unknown');
+            entry.stage = 'verify';
+            addTaskEvent(msg.requestId, msg.command || 'unknown', 'verify', 'Verification completed');
+            finalizeEntry(msg.requestId, msg.command || 'unknown', msg.action, msg.confidence, msg.response, msg.next_step);
+          }
+          if (msg.type === 'actionLog') {
+            renderActionLog(msg.entries || []);
+          }
+          if (msg.type === 'serverStatus') {
+            setServerStatus(msg.status, msg.runtimeLabel);
+          }
+          if (msg.type === 'prefillPrompt') {
+            if (input && msg.prompt) {
+              input.value = String(msg.prompt);
+              input.focus();
+              input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+          }
+        });
+
+        postBootMessage('boot');
+        renderRecent();
+        renderHistory();
+        setTimeout(() => vscode.postMessage({ type: 'ready' }), 0);
+      } catch (error) {
+        reportClientError(error);
+      }
     }
 
     if (document.readyState === 'complete' || document.readyState === 'interactive') {
@@ -3180,6 +3818,23 @@ export function activate(context: vscode.ExtensionContext) {
               command,
               action: String(entry.action ?? 'unknown'),
               confidence: Number(entry.confidence ?? 0),
+            });
+          },
+          onStatus: (entry) => {
+            postPanelMessage({
+              type: 'streamStatus',
+              requestId,
+              command,
+              message: String(entry.message ?? 'Working...'),
+            });
+          },
+          onEvent: (entry) => {
+            postPanelMessage({
+              type: 'streamEvent',
+              requestId,
+              command,
+              kind: String(entry.kind ?? 'event'),
+              message: String(entry.message ?? ''),
             });
           },
           onDelta: (entry) => {

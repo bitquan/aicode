@@ -29,6 +29,18 @@ def _print_help():
     print("  quit")
 
 
+def _print_task_frame(intent: str, plan: str, progress: list[str], outcome: str, next_step: str):
+    print("\nTask Frame")
+    print(f"  Intent : {intent}")
+    print(f"  Plan   : {plan}")
+    if progress:
+        print("  Progress:")
+        for step in progress:
+            print(f"    - {step}")
+    print(f"  Outcome: {outcome}")
+    print(f"  Next   : {next_step}")
+
+
 def _handle_edit(agent, workspace_root: Path, target_path: str, instruction: str):
     absolute_target = (workspace_root / target_path).resolve()
     if not absolute_target.exists():
@@ -83,7 +95,16 @@ def run_terminal_ui(agent):
                 print("Usage: plan <request>")
                 continue
             request = " ".join(args).strip()
-            print(agent.plan_action(request))
+            plan_text = str(agent.plan_action(request))
+            _print_task_frame(
+                intent=f"Clarify and scope request: {request}",
+                plan="Produce a concrete action plan.",
+                progress=["Parsed request", "Generated candidate plan"],
+                outcome="Plan ready",
+                next_step="Run generate or edit with one concrete target.",
+            )
+            print("\nPlan:\n")
+            print(plan_text)
             continue
 
         if command == "generate":
@@ -92,10 +113,18 @@ def run_terminal_ui(agent):
                 continue
             prompt = " ".join(args).strip()
             generated_code = agent.generate_code(prompt)
+            evaluation = agent.evaluate_code(generated_code)
+            _print_task_frame(
+                intent=f"Generate code for: {prompt}",
+                plan="Draft code and run built-in evaluation.",
+                progress=["Generated code", "Ran evaluation"],
+                outcome="Generation completed",
+                next_step="Use edit/autofix to apply code to a concrete file.",
+            )
             print("\nGenerated Code:\n")
             print(generated_code)
             print("\nEvaluation Result:\n")
-            print(agent.evaluate_code(generated_code))
+            print(evaluation)
             continue
 
         if command == "edit":
@@ -123,6 +152,24 @@ def run_terminal_ui(agent):
                 instruction=instruction,
                 allow_multifile=allow_multifile,
                 confirm_flaky=confirm_flaky,
+            )
+            progress = [
+                f"Attempts: {len(result['attempts'])}",
+                f"Confidence: {result.get('confidence', 0.0)}",
+                f"Planned files: {result.get('planned_files', [])}",
+            ]
+            if result["blocker_report"]:
+                progress.append("Blocker report generated")
+            _print_task_frame(
+                intent=f"Autofix target: {target_path}",
+                plan="Iterative fix + verify loop with bounded retries.",
+                progress=progress,
+                outcome="Autofix success" if result["success"] else "Autofix needs recovery",
+                next_step=(
+                    "Retry same path, clarify the instruction, or inspect blocker report."
+                    if not result["success"]
+                    else "Run broader regression checks if needed."
+                ),
             )
             print(f"Autofix success: {result['success']}")
             print(f"Reason: {result['reason']}")

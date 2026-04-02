@@ -13,6 +13,21 @@ Build a local-first coding assistant that can:
 5. Self-correct in loops until success or clear blocker.
 6. Learn from previous fixes to improve next runs.
 
+## Operating Docs
+
+These docs now form the working operating system for the repo:
+
+- `README.md`
+- `.github/copilot-instructions.md`
+- `docs/DEV_BOOK.md`
+- `docs/MAINTAINER_PLAYBOOK.md`
+- `docs/COMMAND_BOOK.md`
+- `docs/HANDOFF_GUIDE.md`
+- `docs/COPILOT_LIKE_FLOW_BLUEPRINT.md`
+- `docs/SELF_IMPROVEMENT_BASELINE_PACK_V1.md`
+
+Rule: roadmap claims are only trustworthy when they match code, tests, and the docs above.
+
 ## Success Metrics (track every sprint)
 
 - Task success rate (fully completed tasks / total tasks)
@@ -107,11 +122,13 @@ Build a local-first coding assistant that can:
 
 ## Proof Log (latest)
 
-- `python -m pytest -q` passes end-to-end (`401 passed`).
+- `./.venv/bin/python -m pytest -q` passes end-to-end (`476 passed`).
 - CLI/chat/API app surfaces now share typed request/response models plus a centralized command dispatcher under `src/tools/commanding/`.
 - `python -m src.main status` now returns a lightweight snapshot by default, while `python -m src.main status --full` and `python -m src.main benchmark` remain the explicit validation-heavy paths.
 - Dashboard and startup context no longer trigger benchmark work implicitly.
 - GitHub Actions CI now runs `ruff`, `mypy`, and `pytest`, and local hooks are defined in `.pre-commit-config.yaml`.
+- The VS Code extension now has a verified VSIX packaging/install path with build-integrity metadata and smoke coverage.
+- The repo now includes dedicated maintainer, command, handoff, and Copilot instruction docs so contributors and AI assistants can work from the same operating map.
 - `python -m src.main gate` returns `passed: True` (tests + eval checks).
 - `python -m src.main telemetry` returns trace/event/fix-memory summary.
 - `python -m src.main deps` returns dependency inventory from `pyproject.toml`.

@@ -2,9 +2,30 @@
 
 Master plan and checklist: [ROADMAP.md](ROADMAP.md)
 Learning baseline spec: [docs/LEARNING_BASELINE_V1.md](docs/LEARNING_BASELINE_V1.md)
+Developer book: [docs/DEV_BOOK.md](docs/DEV_BOOK.md)
+Maintainer playbook: [docs/MAINTAINER_PLAYBOOK.md](docs/MAINTAINER_PLAYBOOK.md)
+Command book: [docs/COMMAND_BOOK.md](docs/COMMAND_BOOK.md)
+Handoff guide: [docs/HANDOFF_GUIDE.md](docs/HANDOFF_GUIDE.md)
+GitHub Copilot instructions: [.github/copilot-instructions.md](.github/copilot-instructions.md)
 
 ## Overview
 This project is a local-first coding assistant backed by Ollama. It exposes the same natural-language action system through the CLI, chat UI, local HTTP API, and VS Code extension, then layers repo search, safe editing, verification, learning, and status reporting on top.
+
+## Docs Map
+
+Use these docs as the main operating map for the repo:
+
+- `README.md`: setup, run, and operator-facing workflows
+- `ROADMAP.md`: roadmap, parity target, and latest proof log
+- `docs/DEV_BOOK.md`: architecture, layering, and development rules
+- `docs/MAINTAINER_PLAYBOOK.md`: release, maintenance, and clean-tree workflow
+- `docs/COMMAND_BOOK.md`: high-value commands, tasks, endpoints, and packaging flows
+- `docs/HANDOFF_GUIDE.md`: transfer checklist for other developers or AI assistants
+- `.github/copilot-instructions.md`: repo-specific guidance for GitHub Copilot and similar AI coding tools
+- `docs/COPILOT_LIKE_FLOW_BLUEPRINT.md`: behavior target for Codex/Copilot-style parity work
+- `docs/SELF_IMPROVEMENT_BASELINE_PACK_V1.md`: acceptance gate for supervised self-improvement
+
+Rule: when commands, runtime behavior, architecture boundaries, or parity claims change, update the matching docs in the same change set.
 
 ## Prerequisites
 - Python 3.11+

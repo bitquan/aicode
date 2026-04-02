@@ -3,6 +3,8 @@
 Date: 2026-04-02  
 Scope: VS Code extension first, then CLI/TUI parity.
 
+Implementation companion: `docs/COPILOT_PANEL_IMPLEMENTATION_SPEC_V1.md`
+
 ---
 
 ## Goal
