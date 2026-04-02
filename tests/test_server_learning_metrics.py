@@ -13,3 +13,12 @@ def test_learning_metrics_endpoint_returns_payload():
     assert "routing_accuracy" in data
     assert "preference_hit_rate" in data
     assert "correction_success_rate" in data
+
+
+def test_decision_metrics_endpoint_returns_payload():
+    client = TestClient(server.app)
+    response = client.get("/metrics/decisions")
+    assert response.status_code == 200
+    data = response.json()
+    assert "summary" in data
+    assert "timeline" in data

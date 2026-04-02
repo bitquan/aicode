@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from src.tools.benchmark_runner import run_benchmark_suite
 from src.tools.roadmap_status import get_roadmap_progress
 from src.tools.status_report import build_status_report, export_status_markdown
@@ -70,3 +72,28 @@ def test_status_report_lightweight_skips_benchmark(monkeypatch, tmp_path):
     assert report["validation_mode"] == "lightweight"
     assert report["benchmark"]["skipped"] is True
     assert report["readiness"] == "feature_complete_validation_deferred"
+
+
+def test_status_report_includes_reasoning_metrics(monkeypatch, tmp_path):
+    (tmp_path / "ROADMAP.md").write_text("- [x] 1) one\n", encoding="utf-8")
+    monkeypatch.setattr("src.tools.status_report.run_benchmark_suite", lambda workspace_root: {"score": 100.0, "checks": []})
+    monkeypatch.setattr("src.tools.status_report.evaluate_budgets", lambda workspace_root: {"passed": True, "checks": {}})
+    monkeypatch.setattr("src.tools.status_report.summarize_costs", lambda workspace_root: {"estimated_total_cost_usd": 0.0})
+    monkeypatch.setattr("src.tools.status_report.build_compliance_summary", lambda workspace_root: {"license_scan_passed": True})
+    monkeypatch.setattr(
+        "src.tools.status_report.read_prompt_events",
+        lambda workspace_root, limit=200: [
+            {"confidence": 0.5, "needs_external_research": True},
+            {"confidence": 0.9, "needs_external_research": False},
+        ],
+    )
+
+    report = build_status_report(str(tmp_path), mode="lightweight")
+    assert "reasoning" in report
+    assert report["reasoning"]["events_considered"] == 2
+    assert report["reasoning"]["research_trigger_count"] == 1
+
+    out_path = export_status_markdown(str(tmp_path), mode="lightweight")
+    content = Path(out_path).read_text(encoding="utf-8")
+    assert "Avg request confidence" in content
+    assert "Research trigger rate" in content

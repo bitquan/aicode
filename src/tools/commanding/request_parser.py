@@ -116,6 +116,29 @@ class ChatRequestParser:
             )
         )
 
+    @staticmethod
+    def _looks_like_capability_request(lower: str) -> bool:
+        return any(
+            phrase in lower
+            for phrase in (
+                "what can you do",
+                "what is your job",
+                "what's your job",
+                "who are you",
+                "name 5 things you can do",
+                "name five things you can do",
+                "what are 5 things you can do",
+                "what are five things you can do",
+                "one thing you can do",
+                "one improvement you can make",
+                "what improvement you can make",
+                "improvement you can make",
+                "improve on how you talk",
+                "talk to me like a human",
+                "talk to users",
+            )
+        )
+
     def parse(self, user_input: str) -> ActionRequest:
         lower = user_input.lower().strip()
         normalized = self._strip_polite_prefixes(user_input)
@@ -141,6 +164,9 @@ class ChatRequestParser:
 
         if self._looks_like_self_awareness_request(lower):
             return build("self_aware_summary", 0.92)
+
+        if lower in {"help", "hey", "hi", "hello"} or self._looks_like_capability_request(lower):
+            return build("help_summary", 0.95)
 
         if self._looks_like_web_request(lower):
             return build("research", 0.88, goal=user_input, prefer_web=True)
@@ -414,14 +440,7 @@ class ChatRequestParser:
             topic = lower.replace("agent memory", "", 1).strip()
             return build("agent_memory", 0.85, mode="recall", topic=topic)
 
-        if (
-            lower in {"help", "hey", "hi", "hello"}
-            or "what can you do" in lower
-            or "capabilities" in lower
-            or "what is your job" in lower
-            or "who are you" in lower
-            or "what's your job" in lower
-        ):
+        if "capabilities" in lower:
             return build("help_summary", 0.95)
 
         if lower.startswith(("security scan", "vulnerability scan", "scan security")):

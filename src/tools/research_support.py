@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from src.tools.doc_fetcher import enhance_with_docs
+from src.tools.doc_fetcher import DOC_SOURCES, DocFetcher, enhance_with_docs
 from src.tools.repo_index import build_file_index
 from src.tools.semantic_retriever import retrieve_relevant_snippets
 
@@ -171,6 +171,34 @@ def build_verification_plan(paths: list[str]) -> dict[str, Any]:
     }
 
 
+def _select_doc_sources(workspace_root: str, goal: str) -> list[dict[str, str]]:
+    """Return authoritative doc sources most relevant to a research goal."""
+    fetcher = DocFetcher(workspace_root)
+    packages = fetcher.extract_requirements(f"{workspace_root}/pyproject.toml")
+    if not packages:
+        packages = fetcher.extract_requirements(f"{workspace_root}/requirements.txt")
+
+    goal_lower = goal.lower()
+    selected: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for package in packages:
+        url = DOC_SOURCES.get(package)
+        if not url or url in seen:
+            continue
+        if package in goal_lower or not selected:
+            seen.add(url)
+            selected.append(
+                {
+                    "label": f"{package} docs",
+                    "url": url,
+                    "reason": "official project documentation",
+                }
+            )
+        if len(selected) >= 3:
+            break
+    return selected
+
+
 def build_research_payload(
     engine: "ChatEngine",
     goal: str,
@@ -221,8 +249,11 @@ def build_research_payload(
             break
 
     web_context = ""
+    selected_sources: list[dict[str, str]] = []
     if prefer_web and web["enabled"]:
         web_context = enhance_with_docs(str(engine.workspace_root), goal)
+        if web_context:
+            selected_sources = _select_doc_sources(str(engine.workspace_root), goal)
 
     verification = build_verification_plan([item["path"] for item in likely_files[:3]])
     return {
@@ -234,6 +265,7 @@ def build_research_payload(
         "web": web,
         "web_research_used": bool(web_context),
         "web_context": web_context,
+        "selected_sources": selected_sources,
         "likely_files": likely_files,
         "verification_plan": verification["descriptions"],
         "verification_plan_steps": verification["steps"],
@@ -274,6 +306,10 @@ def render_research_summary(payload: dict[str, Any]) -> str:
     if payload.get("web_context"):
         lines.append("")
         lines.append(str(payload["web_context"]))
+    if payload.get("selected_sources"):
+        lines.append("  • Sources:")
+        for source in payload["selected_sources"][:3]:
+            lines.append(f"    - {source.get('label')}: {source.get('url')}")
 
     lines.append("")
     lines.append("  • Proposed next step: I can patch the likely files above directly.")

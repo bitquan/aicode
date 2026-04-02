@@ -286,7 +286,20 @@ def test_healthz_endpoint(client):
     mock_response = MagicMock()
     mock_response.json.return_value = {"models": [{"model": "qwen2.5-coder:7b"}]}
 
-    with patch("src.server.requests.get", return_value=mock_response):
+    mock_awareness = {
+        "confidence_policy": {"low_confidence_research_threshold": 0.66},
+        "recent_decision_metrics": {
+            "events_considered": 5,
+            "avg_confidence": 0.8,
+            "research_trigger_count": 1,
+            "research_trigger_rate": 0.2,
+        },
+    }
+
+    with patch("src.server.requests.get", return_value=mock_response), patch(
+        "src.server._app_service._engine.get_self_awareness_snapshot",
+        return_value=mock_awareness,
+    ):
         resp = client.get("/healthz")
 
     assert resp.status_code == 200
@@ -299,6 +312,8 @@ def test_healthz_endpoint(client):
     assert payload["ollama"]["model_available"] is True
     assert payload["runtime"]["routing_generation"] >= 1
     assert "started_at" in payload["runtime"]
+    assert payload["confidence_policy"]["low_confidence_research_threshold"] == 0.66
+    assert payload["recent_decision_metrics"]["research_trigger_rate"] == 0.2
 
 
 def test_readiness_endpoint(client, monkeypatch):
@@ -336,6 +351,8 @@ def test_latest_self_improve_run_endpoint(client, monkeypatch):
             "state": "proposed",
             "goal": "add a clear chat button",
             "candidate_summary": "User-requested improvement",
+            "pinned_files": ["vscode-extension/src/extension.ts"],
+            "approved_files": ["vscode-extension/src/extension.ts"],
             "likely_files": [{"path": "vscode-extension/src/extension.ts", "reason": "VS Code panel", "score": 8}],
             "verification_plan": ["npm --prefix vscode-extension run compile"],
             "web_research_used": False,
@@ -349,6 +366,8 @@ def test_latest_self_improve_run_endpoint(client, monkeypatch):
     payload = resp.json()
     assert payload["run_id"] == "sir_latest"
     assert payload["state"] == "proposed"
+    assert payload["pinned_files"] == ["vscode-extension/src/extension.ts"]
+    assert payload["approved_files"] == ["vscode-extension/src/extension.ts"]
 
 
 def test_self_improve_run_by_id_endpoint(client, monkeypatch):
@@ -360,6 +379,8 @@ def test_self_improve_run_by_id_endpoint(client, monkeypatch):
             "state": "verified",
             "goal": "fix routing",
             "candidate_summary": "Fix a failing canary",
+            "pinned_files": ["src/tools/commanding/request_parser.py"],
+            "approved_files": ["src/tools/commanding/request_parser.py"],
             "likely_files": [{"path": "src/tools/commanding/request_parser.py", "reason": "parser", "score": 9}],
             "verification_plan": ["./.venv/bin/python -m pytest -q tests/test_app_service.py"],
             "web_research_used": False,
@@ -373,6 +394,7 @@ def test_self_improve_run_by_id_endpoint(client, monkeypatch):
     payload = resp.json()
     assert payload["run_id"] == "sir_known"
     assert payload["state"] == "verified"
+    assert payload["approved_files"] == ["src/tools/commanding/request_parser.py"]
 
 
 def test_dashboard_page_endpoint(client):
@@ -480,6 +502,10 @@ def test_app_command_streaming_endpoint(client, monkeypatch):
                 "applied_preferences": [],
                 "output_trace_id": "out_123",
                 "events": [{"kind": "route", "message": "Routed to status"}],
+                "route_attempts": ["status"],
+                "recovered_from_action": None,
+                "needs_external_research": False,
+                "research_trigger_reason": None,
             }
 
     monkeypatch.setattr("src.server._app_service", DummyService())
@@ -496,6 +522,8 @@ def test_app_command_streaming_endpoint(client, monkeypatch):
     assert "event: delta" in body
     assert "event: done" in body
     assert "hello streamed world" in body
+    assert '"route_attempts": ["status"]' in body
+    assert '"needs_external_research": false' in body
 
 
 def test_editor_chat_endpoint(client):

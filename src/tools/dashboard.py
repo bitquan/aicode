@@ -21,12 +21,19 @@ class DashboardBuilder:
         roadmap = self._parse_roadmap(roadmap_file)
 
         benchmark = status.get("benchmark", {})
+        reasoning = status.get("reasoning", {})
+        alerts = reasoning.get("alerts", [])
         return {
             "workspace": self.workspace_root.name,
             "readiness": status.get("readiness", "unknown"),
             "validation_mode": status.get("validation_mode", "lightweight"),
             "benchmark_score": benchmark.get("score"),
             "benchmark_profile": benchmark.get("profile"),
+            "avg_confidence": reasoning.get("avg_confidence", 0.0),
+            "research_trigger_rate": reasoning.get("research_trigger_rate", 0.0),
+            "reroute_rate": reasoning.get("reroute_rate", 0.0),
+            "decision_alert_count": len(alerts),
+            "decision_alert_severity": reasoning.get("highest_alert_severity", "none"),
             "roadmap_percent": roadmap.get("percent", 0.0),
             "roadmap_done": roadmap.get("done", 0),
             "roadmap_total": roadmap.get("total", 0),
@@ -66,6 +73,11 @@ def render_dashboard_html(payload: Dict[str, Any]) -> str:
       <div class=\"card\"><div class=\"title\">Readiness</div><div class=\"value\">{payload.get('readiness')}</div></div>
       <div class=\"card\"><div class=\"title\">Validation</div><div class=\"value\">{payload.get('validation_mode')}</div></div>
       <div class=\"card\"><div class=\"title\">Benchmark</div><div class=\"value\">{payload.get('benchmark_score')}</div></div>
+        <div class=\"card\"><div class=\"title\">Avg Confidence</div><div class=\"value\">{payload.get('avg_confidence')}</div></div>
+        <div class=\"card\"><div class=\"title\">Research Trigger Rate</div><div class=\"value\">{payload.get('research_trigger_rate')}</div></div>
+        <div class=\"card\"><div class=\"title\">Reroute Rate</div><div class=\"value\">{payload.get('reroute_rate')}</div></div>
+        <div class=\"card\"><div class=\"title\">Decision Alerts</div><div class=\"value\">{payload.get('decision_alert_count')}</div></div>
+        <div class=\"card\"><div class=\"title\">Alert Severity</div><div class=\"value\">{payload.get('decision_alert_severity')}</div></div>
       <div class=\"card\"><div class=\"title\">Roadmap</div><div class=\"value\">{payload.get('roadmap_percent')}%</div></div>
       <div class=\"card\"><div class=\"title\">Done</div><div class=\"value\">{payload.get('roadmap_done')}</div></div>
       <div class=\"card\"><div class=\"title\">Total</div><div class=\"value\">{payload.get('roadmap_total')}</div></div>

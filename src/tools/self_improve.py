@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,7 +14,7 @@ from src.tools.learning_events import read_output_traces, read_prompt_events
 from src.tools.patch_applier import apply_file_edit, preview_diff
 from src.tools.project_memory import remember_note
 from src.tools.readiness_suite import run_engine_readiness_suite
-from src.tools.research_support import build_research_payload
+from src.tools.research_support import build_research_payload, build_verification_plan
 from src.tools.snapshot_manager import rollback_snapshot
 from src.tools.status_report import build_status_report
 from src.tools.test_runner import run_test_command
@@ -39,6 +40,14 @@ DEPENDENCY_FILES = {
 DISALLOWED_PATH_MARKERS = {
     "migrations",
     "alembic",
+}
+KNOWN_FILE_NAMES = {
+    "readme",
+    "readme.md",
+    "package.json",
+    "pyproject.toml",
+    "tasks.json",
+    "launch.json",
 }
 
 
@@ -117,6 +126,78 @@ def build_self_improvement_status_snapshot(workspace_root: str) -> dict[str, Any
         "last_rollback_reason": rolled_back.get("last_error") if rolled_back else None,
         "run_count": len(runs),
     }
+
+
+def _normalize_path_token(token: str) -> str:
+    return token.strip().strip("`'\"()[]{}.,:;")
+
+
+def _looks_like_explicit_path(token: str) -> bool:
+    candidate = _normalize_path_token(token)
+    if not candidate:
+        return False
+    lowered = candidate.lower()
+    if "/" in candidate or candidate.startswith((".", "src", "tests", "vscode-extension", ".vscode")):
+        return True
+    if re.search(r"\.[a-z0-9]{1,8}$", lowered):
+        return True
+    return lowered in KNOWN_FILE_NAMES
+
+
+def _extract_explicit_paths(goal: str) -> list[str]:
+    matches = re.findall(
+        r"`[^`]+`|(?:\.{0,2}/|src/|tests/|vscode-extension/|\.vscode/)[^\s,;:()]+|[A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,8}",
+        goal,
+    )
+    paths: list[str] = []
+    for match in matches:
+        candidate = _normalize_path_token(match)
+        if not _looks_like_explicit_path(candidate):
+            continue
+        if candidate not in paths:
+            paths.append(candidate)
+    return paths
+
+
+def _pin_research_paths(
+    research: dict[str, Any],
+    pinned_files: list[str],
+) -> dict[str, Any]:
+    if not pinned_files:
+        return research
+
+    likely_files = list(research.get("likely_files", []))
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for path in pinned_files:
+        merged.append({"path": path, "reason": "explicit path", "score": 10})
+        seen.add(path)
+
+    for item in likely_files:
+        path = str(item.get("path", "")).strip()
+        if not path or path in seen:
+            continue
+        merged.append(item)
+        seen.add(path)
+
+    updated = dict(research)
+    updated["likely_files"] = merged
+    return updated
+
+
+def _approved_files_from_run(run: dict[str, Any]) -> list[str]:
+    paths: list[str] = []
+    pinned_files = [str(item).strip() for item in run.get("pinned_files", []) if str(item).strip()]
+    source_items = pinned_files or [str(item.get("path", "")).strip() for item in run.get("likely_files", [])]
+    for path in source_items:
+        if not path or _is_disallowed_target(path):
+            continue
+        if path not in paths:
+            paths.append(path)
+        if len(paths) >= MAX_EDIT_FILES:
+            break
+    return paths
 
 
 def _derive_actions(status_report: dict) -> list[str]:
@@ -418,7 +499,19 @@ def create_self_improvement_plan(
     source: str = "chat",
 ) -> dict[str, Any]:
     candidate = _select_candidate(workspace_root, engine, goal=goal)
+    pinned_files = _extract_explicit_paths(candidate["goal"])
     research = build_research_payload(engine, candidate["goal"], prefer_web=prefer_web)
+    research = _pin_research_paths(research, pinned_files)
+    approved_files = _approved_files_from_run(
+        {
+            "pinned_files": pinned_files,
+            "likely_files": research.get("likely_files", []),
+        }
+    )
+    verification = build_verification_plan(approved_files) if approved_files else {
+        "descriptions": research.get("verification_plan", []),
+        "steps": research.get("verification_plan_steps", []),
+    }
     timestamp = _utc_now_iso()
     run = {
         "run_id": f"sir_{uuid4().hex[:10]}",
@@ -428,9 +521,11 @@ def create_self_improvement_plan(
         "source": source,
         "candidate": candidate,
         "candidate_summary": candidate["summary"],
+        "pinned_files": pinned_files,
+        "approved_files": approved_files,
         "likely_files": research.get("likely_files", []),
-        "verification_plan": research.get("verification_plan", []),
-        "verification_plan_steps": research.get("verification_plan_steps", []),
+        "verification_plan": verification.get("descriptions", []),
+        "verification_plan_steps": verification.get("steps", []),
         "web_research_allowed": bool(research.get("web", {}).get("enabled", False)),
         "web_research_used": bool(research.get("web_research_used", False)),
         "research": research,
@@ -444,6 +539,10 @@ def create_self_improvement_plan(
     }
     _append_event(run, "select", f"Selected candidate: {candidate['category']}")
     _append_event(run, "research", f"Researched goal: {candidate['goal']}")
+    if pinned_files:
+        _append_event(run, "pin", f"Pinned files: {', '.join(pinned_files)}")
+    if approved_files:
+        _append_event(run, "approve_scope", f"Approve run with files: {', '.join(approved_files)}")
     _append_event(run, "state", "Proposal created; awaiting approval")
     engine.self_builder.record_run_outcome(
         run_id=run["run_id"],
@@ -478,8 +577,9 @@ def _is_disallowed_target(path: str) -> bool:
 
 def _candidate_target_paths(run: dict[str, Any]) -> list[str]:
     paths: list[str] = []
-    for item in run.get("likely_files", [])[:MAX_EDIT_FILES]:
-        path = str(item.get("path", "")).strip()
+    source_items = run.get("approved_files") or [item.get("path", "") for item in run.get("likely_files", [])]
+    for item in source_items[:MAX_EDIT_FILES]:
+        path = str(item).strip()
         if not path or _is_disallowed_target(path):
             continue
         if path not in paths:
@@ -637,6 +737,8 @@ def apply_self_improvement_run(
             "state": "rejected",
             "goal": "",
             "candidate_summary": "Self-improvement run not found.",
+            "pinned_files": [],
+            "approved_files": [],
             "likely_files": [],
             "verification_plan": [],
             "web_research_used": False,
@@ -653,9 +755,39 @@ def apply_self_improvement_run(
     run["blocked_reason"] = None
     _append_event(run, "approve", "Approval recorded; validating bounded apply")
 
+    approved_files = [str(item).strip() for item in run.get("approved_files", []) if str(item).strip()]
+    if not approved_files:
+        run["blocked_reason"] = "No approved file allowlist is attached to this run."
+        run["last_error"] = run["blocked_reason"]
+        _append_event(run, "blocked", run["blocked_reason"])
+        engine.self_builder.record_run_outcome(
+            run_id=run["run_id"],
+            state=run["state"],
+            goal=run.get("goal", ""),
+            category=run.get("candidate", {}).get("category", "unknown"),
+            rollback_performed=False,
+            verification_passed=False,
+        )
+        return _persist_run(workspace_root, run)
+
     target_paths = _candidate_target_paths(run)
     if not target_paths:
         run["blocked_reason"] = "No safe target files were available for bounded apply."
+        run["last_error"] = run["blocked_reason"]
+        _append_event(run, "blocked", run["blocked_reason"])
+        engine.self_builder.record_run_outcome(
+            run_id=run["run_id"],
+            state=run["state"],
+            goal=run.get("goal", ""),
+            category=run.get("candidate", {}).get("category", "unknown"),
+            rollback_performed=False,
+            verification_passed=False,
+        )
+        return _persist_run(workspace_root, run)
+
+    disallowed_targets = [path for path in target_paths if path not in approved_files]
+    if disallowed_targets:
+        run["blocked_reason"] = f"Apply rejected: targets outside approved allowlist: {', '.join(disallowed_targets)}"
         run["last_error"] = run["blocked_reason"]
         _append_event(run, "blocked", run["blocked_reason"])
         engine.self_builder.record_run_outcome(
@@ -684,6 +816,28 @@ def apply_self_improvement_run(
         return _persist_run(workspace_root, run)
 
     proposals = _generate_edit_proposals(workspace_root, engine, run, target_paths)
+    disallowed_proposals = [
+        str(item.get("path", "")).strip()
+        for item in proposals
+        if str(item.get("path", "")).strip() not in approved_files
+    ]
+    if disallowed_proposals:
+        run["blocked_reason"] = (
+            "Apply rejected: generated edits outside approved allowlist: "
+            f"{', '.join(disallowed_proposals)}"
+        )
+        run["last_error"] = run["blocked_reason"]
+        _append_event(run, "blocked", run["blocked_reason"])
+        engine.self_builder.record_run_outcome(
+            run_id=run["run_id"],
+            state=run["state"],
+            goal=run.get("goal", ""),
+            category=run.get("candidate", {}).get("category", "unknown"),
+            rollback_performed=False,
+            verification_passed=False,
+        )
+        return _persist_run(workspace_root, run)
+
     changed_lines = sum(int(item.get("changed_lines", 0)) for item in proposals)
     if not proposals:
         run["blocked_reason"] = "No bounded file edits were produced for this proposal."
@@ -762,6 +916,8 @@ def apply_self_improvement_run(
 
 def format_self_improvement_run(run: dict[str, Any]) -> str:
     likely_files = run.get("likely_files", [])
+    pinned_files = [str(item) for item in run.get("pinned_files", []) if str(item)]
+    approved_files = [str(item) for item in run.get("approved_files", []) if str(item)]
     verification = run.get("verification_plan", [])
     lines = [
         "♻️ Self-Improvement Run",
@@ -778,6 +934,10 @@ def format_self_improvement_run(run: dict[str, Any]) -> str:
         lines.append(f"  • Blocked: {run['blocked_reason']}")
     if run.get("last_error"):
         lines.append(f"  • Last error: {run['last_error']}")
+    if pinned_files:
+        lines.append(f"  • Pinned files: {', '.join(pinned_files)}")
+    if approved_files:
+        lines.append(f"  • Approve run with files: {', '.join(approved_files)}")
 
     lines.append("  • Likely files:")
     if likely_files:

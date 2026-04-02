@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from src.tools.commanding.models import ActionResponse
 from src.tools.doc_fetcher import enhance_with_docs
 from src.tools.project_memory import remember_note
 from src.tools.readiness_suite import run_engine_readiness_suite
@@ -322,7 +323,20 @@ def _handle_research(engine: "ChatEngine", request: dict[str, Any]) -> str:
     )
     text = shared_render_research_summary(payload)
     engine._log_interaction(goal, "research", bool(payload.get("likely_files")), payload.get("web_context") or None)
-    return text
+    return ActionResponse.from_text(
+        action="research",
+        text=text,
+        confidence=float(request.get("confidence", 0.0) or 0.0),
+        data={
+            "goal": payload.get("goal"),
+            "likely_files": payload.get("likely_files", []),
+            "verification_plan": payload.get("verification_plan", []),
+            "verification_plan_steps": payload.get("verification_plan_steps", []),
+            "web_research_used": bool(payload.get("web_research_used", False)),
+            "selected_sources": payload.get("selected_sources", []),
+            "local_context_selected": payload.get("likely_files", []),
+        },
+    )
 
 
 def _handle_status(engine: "ChatEngine", request: dict[str, Any]) -> str:
@@ -345,13 +359,27 @@ def _handle_status(engine: "ChatEngine", request: dict[str, Any]) -> str:
     readiness = status.get("readiness", "unknown")
     benchmark = status.get("benchmark", {})
     score = benchmark.get("score", "N/A")
+    reasoning = status.get("reasoning", {})
+    roadmap_pct = status.get("roadmap", {}).get("percent", "N/A")
+    validation = status.get("validation_mode", validation_mode)
+    prefers_human_style = engine.prefers_conversational_responses("status")
+
+    if prefers_human_style:
+        return (
+            f"Quick status: readiness is {readiness} in {validation} mode.\n"
+            f"Benchmark score is {score}, roadmap completion is {roadmap_pct}%, and avg confidence is {reasoning.get('avg_confidence', 0.0)}.\n"
+            "If you want, I can drill into the biggest risk next."
+        )
 
     return (
-        "📊 Project Status:\n"
-        f"  Validation Mode: {status.get('validation_mode', validation_mode)}\n"
-        f"  Readiness: {readiness}\n"
-        f"  Benchmark Score: {score}\n"
-        f"  Roadmap: {status.get('roadmap', {}).get('percent', 'N/A')}% complete"
+        "📊 Project Status\n"
+        f"You’re in {validation} validation mode, and overall readiness is {readiness}.\n"
+        f"Benchmark score: {score}. Roadmap completion: {roadmap_pct}%.\n"
+        f"Decision quality: avg confidence {reasoning.get('avg_confidence', 0.0)}, "
+        f"reroute rate {reasoning.get('reroute_rate', 0.0)}, "
+        f"research trigger rate {reasoning.get('research_trigger_rate', 0.0)}.\n"
+        f"Decision alerts: {len(reasoning.get('alerts', []))} ({reasoning.get('highest_alert_severity', 'none')}).\n"
+        "If you want, I can run a full status validation next."
     )
 
 
@@ -359,10 +387,25 @@ def _handle_readiness(engine: "ChatEngine", request: dict[str, Any]) -> str:
     """Run self-improvement readiness canaries against the current engine/runtime."""
     report = run_engine_readiness_suite(engine)
     engine._log_interaction("readiness", "readiness", report.get("failed", 1) == 0)
+    prefers_human_style = engine.prefers_conversational_responses("readiness")
+    if prefers_human_style:
+        lines = [
+            "Readiness check complete.",
+            f"Current status: {report.get('status')} ({report.get('passed', 0)}/{report.get('total', 0)} checks passed).",
+        ]
+        if report.get("results"):
+            first = report["results"][0]
+            lines.append(
+                f"First canary: {first.get('name')} → {first.get('actual_action')} (expected {first.get('expected_action')})."
+            )
+        if report.get("failed", 0):
+            lines.append("I can patch the first failing canary next.")
+        return "\n".join(lines)
+
     lines = [
         "🧪 Self-Improvement Readiness",
-        f"  • Status: {report.get('status')}",
-        f"  • Passed: {report.get('passed', 0)}/{report.get('total', 0)}",
+        f"Current status: {report.get('status')} ({report.get('passed', 0)}/{report.get('total', 0)} checks passed).",
+        "Runtime checks:",
         f"  • Routing generation: {report.get('routing_generation')}",
         f"  • Suite version: {report.get('readiness_suite_version')}",
         f"  • Server reachable: {report.get('server_reachable')}",
@@ -370,6 +413,7 @@ def _handle_readiness(engine: "ChatEngine", request: dict[str, Any]) -> str:
         f"  • Web enabled: {report.get('web_enabled')}",
         f"  • VS Code panel: {report.get('known_vscode_panel')}",
     ]
+    lines.append("Recent canaries:")
     for item in report.get("results", [])[:5]:
         verdict = "✅" if item.get("passed") else "❌"
         lines.append(
@@ -379,6 +423,8 @@ def _handle_readiness(engine: "ChatEngine", request: dict[str, Any]) -> str:
         missing = item.get("missing_response_markers", [])
         if missing:
             lines.append(f"    missing markers: {', '.join(missing)}")
+    if report.get("failed", 0):
+        lines.append("If you want, I can focus on the first failing canary and patch it now.")
     return "\n".join(lines)
 
 
@@ -483,11 +529,11 @@ def _handle_git(engine: "ChatEngine", request: dict[str, Any]) -> str:
         if "error" in summary:
             engine._log_interaction(query, "git", False)
             return f"❌ {summary['error']}"
-        lines = ["🔎 Git Diff Summary:"]
+        lines = ["🔎 Git Diff Summary", "I reviewed your current diff. Here are the top file deltas:"]
         for item in summary.get("files", [])[:10]:
             lines.append(f"  • {item['path']}: +{item['added']} / -{item['removed']}")
         engine._log_interaction(query, "git", True)
-        return "\n".join(lines) if len(lines) > 1 else "🔎 No unstaged changes found"
+        return "\n".join(lines) if len(lines) > 2 else "🔎 No unstaged changes found right now."
 
     if "commit message" in query:
         message = engine.git_integration.suggest_commit_message()
@@ -502,7 +548,10 @@ def _handle_git(engine: "ChatEngine", request: dict[str, Any]) -> str:
         engine._log_interaction(query, "git", False)
         return f"❌ {status['error']}"
     engine._log_interaction(query, "git", True)
-    return f"📦 Git status: {status.get('changed_files', 0)} changed file(s)"
+    return (
+        "📦 Git status\n"
+        f"I checked your working tree: {status.get('changed_files', 0)} changed file(s)."
+    )
 
 
 def _handle_pr(engine: "ChatEngine", request: dict[str, Any]) -> str:
@@ -533,12 +582,21 @@ def _handle_dashboard(engine: "ChatEngine", request: dict[str, Any]) -> str:
     """Show a compact dashboard summary from status and roadmap."""
     payload = engine.dashboard_builder.build()
     engine._log_interaction("dashboard", "dashboard", True)
+    prefers_human_style = engine.prefers_conversational_responses("dashboard")
+    if prefers_human_style:
+        return (
+            f"Here’s the short dashboard view: {payload.get('workspace')} is at {payload.get('roadmap_percent')}% roadmap completion, "
+            f"readiness is {payload.get('readiness')}, and benchmark is {payload.get('benchmark_score')}.\n"
+            "If you want, I can turn that into a priority list next."
+        )
     return (
         "📊 Dashboard Summary\n"
+        "Here’s the latest project snapshot:\n"
         f"  • Workspace: {payload.get('workspace')}\n"
         f"  • Readiness: {payload.get('readiness')}\n"
         f"  • Benchmark: {payload.get('benchmark_score')}\n"
-        f"  • Roadmap: {payload.get('roadmap_percent')}% ({payload.get('roadmap_done')}/{payload.get('roadmap_total')})"
+        f"  • Roadmap: {payload.get('roadmap_percent')}% ({payload.get('roadmap_done')}/{payload.get('roadmap_total')})\n"
+        "If you want, I can break this down by risk area next."
     )
 
 
@@ -831,17 +889,28 @@ def _handle_repo_summary(engine: "ChatEngine", request: dict[str, Any]) -> str:
 
     ranked = sorted(top_dirs.items(), key=lambda item: item[1], reverse=True)[:6]
     engine._log_interaction("repo summary", "repo_summary", True)
+    prefers_human_style = engine.prefers_conversational_responses("repo_summary")
+
+    if prefers_human_style:
+        top_folder_text = ", ".join(f"{folder} ({count})" for folder, count in ranked[:3]) or "no indexed folders yet"
+        return (
+            f"This repo is centered around {engine.workspace_root.name} with {total_files} indexed files.\n"
+            f"The main hotspots are {top_folder_text}.\n"
+            "Best entrypoints: src/main.py, src/server.py, and src/tools/chat_engine.py.\n"
+            "Tell me what you want to change and I’ll point you to the right files."
+        )
 
     lines = [
         "📦 Repository Summary",
-        f"  • Workspace: {engine.workspace_root.name}",
-        f"  • Indexed files: {total_files}",
-        "  • Top folders:",
+        f"Workspace: {engine.workspace_root.name}",
+        f"Indexed files: {total_files}",
+        "Top folders:",
     ]
     for folder, count in ranked:
-        lines.append(f"    - {folder}: {count} files")
+        lines.append(f"  - {folder}: {count} files")
 
-    lines.append("  • Core entrypoints: src/main.py, src/server.py, src/tools/chat_engine.py")
+    lines.append("Core entrypoints: src/main.py, src/server.py, src/tools/chat_engine.py")
+    lines.append("Tell me a goal and I can point you to the exact files to change.")
     return "\n".join(lines)
 
 

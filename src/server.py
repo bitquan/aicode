@@ -38,6 +38,7 @@ from src.tools.readiness_suite import run_engine_readiness_suite
 from src.tools.repo_index import build_file_index
 from src.tools.semantic_retriever import retrieve_relevant_snippets
 from src.tools.dashboard import DashboardBuilder, render_dashboard_html
+from src.tools.decision_timeline import build_decision_timeline
 from src.tools.learning_metrics import build_learning_metrics
 from src.tools.self_improve import get_latest_self_improvement_run, get_self_improvement_run
 from src.tools.test_runner import run_test_command
@@ -256,8 +257,10 @@ class AppCommandResponse(BaseModel):
     action: str
     confidence: float
     response: str
+    next_step: str | None = None
     applied_preferences: list[str] = Field(default_factory=list)
     output_trace_id: str | None = None
+    retrieval_trace_id: str | None = None
     events: list[dict[str, str]] = Field(default_factory=list)
     route_attempts: list[str] = Field(default_factory=list)
     recovered_from_action: str | None = None
@@ -266,9 +269,14 @@ class AppCommandResponse(BaseModel):
     state: str | None = None
     goal: str | None = None
     candidate_summary: str | None = None
+    pinned_files: list[str] = Field(default_factory=list)
+    approved_files: list[str] = Field(default_factory=list)
     likely_files: list[str] = Field(default_factory=list)
     verification_plan: list[str] = Field(default_factory=list)
+    selected_sources: list[dict[str, Any]] = Field(default_factory=list)
     web_research_used: bool | None = None
+    needs_external_research: bool = False
+    research_trigger_reason: str | None = None
     rollback_performed: bool | None = None
 
 
@@ -278,6 +286,8 @@ class SelfImproveRunResponse(BaseModel):
     state: str | None = None
     goal: str | None = None
     candidate_summary: str | None = None
+    pinned_files: list[str] = Field(default_factory=list)
+    approved_files: list[str] = Field(default_factory=list)
     likely_files: list[str] = Field(default_factory=list)
     verification_plan: list[str] = Field(default_factory=list)
     web_research_used: bool | None = None
@@ -296,6 +306,8 @@ class HealthResponse(BaseModel):
     base_url: str
     ollama: dict[str, Any]
     runtime: dict[str, Any]
+    confidence_policy: dict[str, Any] = Field(default_factory=dict)
+    recent_decision_metrics: dict[str, Any] = Field(default_factory=dict)
 
 
 class ReadinessResponse(BaseModel):
@@ -368,6 +380,8 @@ def _serialize_self_improve_run(run: dict[str, Any]) -> dict[str, Any]:
         "state": run.get("state"),
         "goal": run.get("goal"),
         "candidate_summary": run.get("candidate_summary"),
+        "pinned_files": [str(item) for item in run.get("pinned_files", []) if item],
+        "approved_files": [str(item) for item in run.get("approved_files", []) if item],
         "likely_files": likely_files,
         "verification_plan": [str(item) for item in run.get("verification_plan", [])],
         "web_research_used": run.get("web_research_used"),
@@ -670,8 +684,13 @@ async def _stream_app_command(command: str) -> AsyncGenerator[str, None]:
                 "command": result["command"],
                 "action": result["action"],
                 "confidence": result["confidence"],
+                "next_step": result.get("next_step"),
                 "output_trace_id": result.get("output_trace_id"),
                 "applied_preferences": result.get("applied_preferences", []),
+                "route_attempts": result.get("route_attempts", []),
+                "recovered_from_action": result.get("recovered_from_action"),
+                "needs_external_research": result.get("needs_external_research", False),
+                "research_trigger_reason": result.get("research_trigger_reason"),
             },
         )
         for chunk in _chunk_text(result["response"], chunk_size=24):
@@ -683,6 +702,11 @@ async def _stream_app_command(command: str) -> AsyncGenerator[str, None]:
                 "action": result["action"],
                 "confidence": result["confidence"],
                 "response": result["response"],
+                "next_step": result.get("next_step"),
+                "route_attempts": result.get("route_attempts", []),
+                "recovered_from_action": result.get("recovered_from_action"),
+                "needs_external_research": result.get("needs_external_research", False),
+                "research_trigger_reason": result.get("research_trigger_reason"),
             },
         )
     except Exception as exc:  # pragma: no cover - defensive guard
@@ -714,6 +738,7 @@ def list_models() -> dict[str, Any]:
 @app.get("/healthz", response_model=HealthResponse)
 def healthz() -> dict[str, Any]:
     """Return lightweight server health information."""
+    awareness = _app_service._engine.get_self_awareness_snapshot()
     return {
         "status": "ok",
         "workspace_root": str(WORKSPACE_ROOT),
@@ -721,6 +746,8 @@ def healthz() -> dict[str, Any]:
         "base_url": _settings.base_url,
         "ollama": _check_ollama_health(),
         "runtime": RUNTIME_METADATA,
+        "confidence_policy": awareness.get("confidence_policy", {}),
+        "recent_decision_metrics": awareness.get("recent_decision_metrics", {}),
     }
 
 
@@ -774,6 +801,12 @@ def dashboard_page() -> str:
 def learning_metrics_data(limit: int = 1000) -> dict[str, Any]:
     """Return baseline learning metrics as JSON."""
     return build_learning_metrics(str(WORKSPACE_ROOT), limit=max(10, min(limit, 5000)))
+
+
+@app.get("/metrics/decisions")
+def decision_metrics_data(limit: int = 200) -> dict[str, Any]:
+    """Return routing/research decision timeline and aggregate metrics as JSON."""
+    return build_decision_timeline(str(WORKSPACE_ROOT), limit=max(10, min(limit, 2000)))
 
 
 @app.post("/v1/aicode/command", response_model=AppCommandResponse)

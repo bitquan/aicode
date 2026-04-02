@@ -21,6 +21,10 @@ def engine(tmp_path):
     ('prompt', 'expected_action'),
     [
         ('hey', 'help_summary'),
+        ('name 5 things you can do ?', 'help_summary'),
+        ('whats one improvement you can make ?', 'help_summary'),
+        ('talk to me like a human whats one improvement you can make ?', 'help_summary'),
+        ('can you improve on how you talk to users ?', 'help_summary'),
         ('what can you tell me about this repo?', 'repo_summary'),
         ('write a function to parse csv', 'generate'),
         ('fix src/main.py', 'autofix'),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any, Generator, Optional
@@ -41,6 +42,7 @@ from src.tools.framework_experts import FrameworkExperts
 from src.tools.git_integration import GitIntegration
 from src.tools.knowledge_transfer import KnowledgeTransfer
 from src.tools.learned_preferences import get_preferences, retrieve_preferences
+from src.tools.learning_events import read_prompt_events
 from src.tools.multi_agent import MultiAgentCoordinator
 from src.tools.multi_language_support import MultiLanguageSupport
 from src.tools.pr_generator import PRGenerator
@@ -56,6 +58,10 @@ from src.tools.status_report import build_status_report
 from src.tools.team_knowledge_base import TeamKnowledgeBase
 from src.tools.tool_builder import ToolBuilder
 from src.tools.vscode_integration import VSCodeIntegration
+
+
+logger = logging.getLogger(__name__)
+LOW_CONFIDENCE_RESEARCH_THRESHOLD = 0.66
 
 
 class MarkdownRenderer:
@@ -185,8 +191,12 @@ class ChatEngine:
                 self.context["packages"] = packages
 
             self.context["knowledge_base"] = self.self_builder.export_knowledge_base()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "event=chat_engine_load_context_failed workspace_root=%s error=%s",
+                self.workspace_root,
+                exc,
+            )
 
     def _log_interaction(
         self,
@@ -298,6 +308,19 @@ class ChatEngine:
             "app_service": "src/app_service.py",
         }
         self_improvement = build_self_improvement_status_snapshot(str(self.workspace_root))
+        recent_events = read_prompt_events(str(self.workspace_root), limit=120)
+        event_count = len(recent_events)
+        avg_confidence = round(
+            sum(float(item.get("confidence", 0.0) or 0.0) for item in recent_events) / event_count,
+            3,
+        ) if event_count else 0.0
+        research_trigger_count = sum(1 for item in recent_events if bool(item.get("needs_external_research", False)))
+        recent_decision_metrics = {
+            "events_considered": event_count,
+            "avg_confidence": avg_confidence,
+            "research_trigger_count": research_trigger_count,
+            "research_trigger_rate": round(research_trigger_count / event_count, 3) if event_count else 0.0,
+        }
 
         return {
             "workspace_root": str(self.workspace_root),
@@ -311,22 +334,120 @@ class ChatEngine:
             },
             "ollama": ollama,
             "web": self.web_policy(),
+            "confidence_policy": {
+                "low_confidence_research_threshold": LOW_CONFIDENCE_RESEARCH_THRESHOLD,
+                "reroute_actions": ["clarify", "generate"],
+            },
+            "recent_decision_metrics": recent_decision_metrics,
             "self_improvement": self_improvement,
             "commands": sorted(action for action in ACTION_HANDLER_METHODS if action != "clarify"),
         }
 
     def parse_request_model(self, user_input: str) -> ActionRequest:
         """Parse natural-language input into a typed action request."""
+        lower = user_input.strip().lower()
+        affirmative_prompts = {"yes", "yes do that", "do that", "sounds good", "ok do that", "okay do that"}
+        last_response_action = str(self.context.get("last_response_action", ""))
+        last_response_text = str(self.context.get("last_response_text", ""))
+
+        if lower in affirmative_prompts:
+            if last_response_action == "help_summary" and "use this response style by default" in last_response_text.lower():
+                return ActionRequest(
+                    action="user_learn",
+                    confidence=0.96,
+                    raw_input=user_input,
+                    params={
+                        "lesson": "Prefer concise, human, next-step-oriented responses by default.",
+                    },
+                )
+
         return self.request_parser.parse(user_input)
 
     def parse_request(self, user_input: str) -> dict[str, Any]:
         """Backward-compatible dict API for existing callers and tests."""
         return self.parse_request_model(user_input).to_legacy_dict()
 
+    @staticmethod
+    def _looks_freshness_sensitive_query(text: str) -> bool:
+        lower = text.lower()
+        return any(
+            marker in lower
+            for marker in (
+                "latest",
+                "newest",
+                "updated",
+                "current version",
+                "official docs",
+                "release notes",
+            )
+        )
+
+    def _should_reroute_to_research(self, request: ActionRequest) -> tuple[bool, str | None]:
+        if request.action == "research":
+            return False, None
+
+        if request.action in {"help_summary", "self_aware_summary", "status", "repo_summary"}:
+            return False, None
+
+        policy = self.web_policy()
+        if not policy.get("enabled", False):
+            return False, None
+
+        goal_text = request.raw_input or str(request.get("instruction", "")).strip()
+        if not goal_text:
+            return False, None
+
+        confidence_value = float(request.confidence or 0.0)
+        low_confidence = confidence_value > 0.0 and confidence_value < LOW_CONFIDENCE_RESEARCH_THRESHOLD
+        prefer_web = bool(request.get("prefer_web", False))
+        freshness_sensitive = self._looks_freshness_sensitive_query(goal_text)
+        explicit_only = bool(policy.get("requires_explicit_request", True))
+
+        if prefer_web and request.action in {"clarify", "generate", "search", "repo_summary"}:
+            return True, "explicit_web_preference"
+
+        if freshness_sensitive and request.action in {"clarify", "generate", "search", "repo_summary"}:
+            return True, "freshness_sensitive_query"
+
+        if low_confidence and request.action in {"clarify", "generate"}:
+            if explicit_only and not (prefer_web or freshness_sensitive):
+                return True, "low_confidence_unknown"
+            return True, "low_confidence_unknown"
+
+        return False, None
+
     def execute_request(self, request: ActionRequest | dict[str, Any]) -> ActionResponse:
         """Execute a typed action request."""
         typed_request = request if isinstance(request, ActionRequest) else ActionRequest.from_mapping(request)
-        return self.dispatcher.dispatch(self, typed_request)
+        should_reroute, reason = self._should_reroute_to_research(typed_request)
+
+        if should_reroute:
+            research_request = ActionRequest(
+                action="research",
+                confidence=max(float(typed_request.confidence or 0.0), 0.78),
+                raw_input=typed_request.raw_input,
+                params={
+                    "goal": typed_request.raw_input or str(typed_request.get("instruction", "")).strip(),
+                    "prefer_web": True,
+                    "research_trigger_reason": reason,
+                    "original_action": typed_request.action,
+                },
+            )
+            response = self.dispatcher.dispatch(self, research_request)
+            response.data.setdefault("needs_external_research", True)
+            response.data.setdefault("research_trigger_reason", reason)
+            response.data.setdefault("route_attempts", [typed_request.action, "research"])
+            self.context["last_response_action"] = response.action
+            self.context["last_response_text"] = response.text
+            return response
+
+        response = self.dispatcher.dispatch(self, typed_request)
+        response.data.setdefault("needs_external_research", False)
+        response.data.setdefault("research_trigger_reason", None)
+        response.data.setdefault("route_attempts", [typed_request.action])
+        self.context["last_response_action"] = response.action
+        self.context["last_response_text"] = response.text
+        return response
 
     def execute(self, request: dict[str, Any]) -> str:
         """Backward-compatible string API for existing callers and tests."""
@@ -397,6 +518,36 @@ class ChatEngine:
     def get_last_applied_preferences(self) -> list[dict[str, str]]:
         """Return preferences applied to the most recent generate/autofix call."""
         return list(self._last_applied_preferences)
+
+    def prefers_conversational_responses(self, request_intent: str = "help_summary") -> bool:
+        """Return whether learned preferences indicate concise, human-style replies."""
+        candidate_texts: list[str] = []
+
+        for item in retrieve_preferences(
+            workspace_root=str(self.workspace_root),
+            request_intent=request_intent,
+            top_k=5,
+        ):
+            candidate_texts.append(str(item.get("statement", "")))
+
+        if not candidate_texts:
+            for row in get_notes(str(self.workspace_root), key="lesson", limit=10):
+                candidate_texts.append(str(row.get("value", "")))
+
+        markers = (
+            "concise",
+            "human",
+            "shorter",
+            "clearer",
+            "next-step",
+            "next step",
+            "talk like a human",
+        )
+        for text in candidate_texts:
+            lower = text.lower().strip()
+            if lower and any(marker in lower for marker in markers):
+                return True
+        return False
 
     def _infer_preference_category(self, lesson: str) -> str:
         """Infer a baseline preference category from freeform lesson text."""

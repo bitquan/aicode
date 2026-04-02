@@ -86,6 +86,22 @@ poetry run python -m src.main policy-recommend autofix "python -m pytest -q"
 poetry run python -m src.main eval
 ```
 
+Live learning mode (continuous, learning-only by default):
+
+```bash
+poetry run python -m src.main live status
+poetry run python -m src.main live --iterations 1 --interval 10
+poetry run python -m src.main live --allow-unlocked
+poetry run python -m src.main live unlock research
+poetry run python -m src.main live reset
+```
+
+Behavior notes:
+- `live` runs continuous learning cycles even without new user input.
+- Default execution slice is `learn` only.
+- Additional slices (`research`, `optimize`) are unlockable and can be enabled with `--allow-unlocked`.
+- Live mode state is persisted at `.knowledge_base/live_mode_state.json`.
+
 Governance and operations helpers:
 
 ```bash

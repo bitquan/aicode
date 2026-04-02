@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from src.tools.commanding import ActionResponse
+from src.tools.decision_timeline import build_decision_timeline
 from src.tools.learned_preferences import add_preference, apply_correction, clear_preferences
 from src.tools.learning_metrics import build_learning_metrics
 from src.tools.project_memory import remember_note
@@ -193,6 +194,8 @@ def _handle_self_improve_plan(engine: "ChatEngine", request: dict[str, Any]) -> 
             "state": run["state"],
             "goal": run["goal"],
             "candidate_summary": run["candidate_summary"],
+            "pinned_files": run.get("pinned_files", []),
+            "approved_files": run.get("approved_files", []),
             "likely_files": [item["path"] for item in run.get("likely_files", [])],
             "verification_plan": run.get("verification_plan", []),
             "web_research_used": bool(run.get("web_research_used", False)),
@@ -235,6 +238,8 @@ def _handle_self_improve_apply(engine: "ChatEngine", request: dict[str, Any]) ->
             "state": run.get("state"),
             "goal": run.get("goal", ""),
             "candidate_summary": run.get("candidate_summary", ""),
+            "pinned_files": run.get("pinned_files", []),
+            "approved_files": run.get("approved_files", []),
             "likely_files": [item["path"] for item in run.get("likely_files", [])],
             "verification_plan": run.get("verification_plan", []),
             "web_research_used": bool(run.get("web_research_used", False)),
@@ -266,6 +271,8 @@ def _handle_self_improve_status(engine: "ChatEngine", request: dict[str, Any]) -
             "state": None,
             "goal": "",
             "candidate_summary": "",
+            "pinned_files": [],
+            "approved_files": [],
             "likely_files": [],
             "verification_plan": [],
             "web_research_used": False,
@@ -280,6 +287,8 @@ def _handle_self_improve_status(engine: "ChatEngine", request: dict[str, Any]) -
             "state": run.get("state"),
             "goal": run.get("goal", ""),
             "candidate_summary": run.get("candidate_summary", ""),
+            "pinned_files": run.get("pinned_files", []),
+            "approved_files": run.get("approved_files", []),
             "likely_files": [item["path"] for item in run.get("likely_files", [])],
             "verification_plan": run.get("verification_plan", []),
             "web_research_used": bool(run.get("web_research_used", False)),
@@ -344,10 +353,12 @@ def _handle_tool_builder(engine: "ChatEngine", request: dict[str, Any]) -> str:
 def _handle_learning_metrics(engine: "ChatEngine", request: dict[str, Any]) -> str:
     """Show baseline learning quality metrics from local telemetry."""
     metrics = build_learning_metrics(str(engine.workspace_root), limit=1000)
+    timeline = build_decision_timeline(str(engine.workspace_root), limit=200)
     routing = metrics.get("routing_accuracy", {})
     preference = metrics.get("preference_hit_rate", {})
     correction = metrics.get("correction_success_rate", {})
     sizes = metrics.get("sample_sizes", {})
+    decision_summary = timeline.get("summary", {})
 
     engine._log_interaction("learning metrics", "learning_metrics", True)
     return (
@@ -360,7 +371,9 @@ def _handle_learning_metrics(engine: "ChatEngine", request: dict[str, Any]) -> s
         f"  • Preference hit rate: {preference.get('hit_rate_pct', 0.0)}% "
         f"({preference.get('hits', 0)}/{preference.get('eligible', 0)})\n"
         f"  • Correction success rate: {correction.get('success_rate_pct', 0.0)}% "
-        f"({correction.get('successful', 0)}/{correction.get('total', 0)})"
+        f"({correction.get('successful', 0)}/{correction.get('total', 0)})\n"
+        f"  • Reroute rate: {decision_summary.get('reroute_rate', 0.0)}\n"
+        f"  • Research trigger rate: {decision_summary.get('research_trigger_rate', 0.0)}"
     )
 
 

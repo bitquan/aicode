@@ -1,192 +1,262 @@
-# Learning Baseline v1 (Copilot-like for this Repo)
+# Main Baseline v1 (Repo-Wide, Copilot-Like)
 
 ## Goal
 
-Establish a practical baseline that makes this project behave like a strong coding copilot for this repository, then continuously improve from user prompts and feedback.
+Define a single **Main Baseline v1** for this repository that follows the Copilot-like flow and covers all major surfaces: CLI, chat engine, API server, VS Code extension, tools, tests, governance, and learning.
 
-Scope includes:
-- Local app/API/extension workflows in this repo
-- Deterministic routing + tool usage + memory application
-- Learn-and-adapt loop from explicit user teaching and corrections
+This baseline is the primary execution contract for `aicode`.
+
+Status: Implemented in the repository as of 2026-04-02.
+
+Primary implementation evidence:
+
+- Acceptance gate: `tests/test_learning_baseline_v1.py`
+- Self-improvement promotion gate: `docs/SELF_IMPROVEMENT_BASELINE_PACK_V1.md`
+- Prompt telemetry: `.autofix_reports/prompt_events.jsonl`
+- Retrieval/research trace: `.autofix_reports/retrieval_traces.jsonl`
+- Output trace: `.autofix_reports/output_traces.jsonl`
+- Learning/correction metrics: `src/tools/learning_metrics.py`
+
+Companion flow spec: `docs/COPILOT_LIKE_FLOW_BLUEPRINT.md`
+
+---
+
+## 1) Baseline Scope (Whole Repo)
+
+Baseline v1 applies to:
+
+- `src/main.py` (CLI + command entrypoints)
+- `src/tools/chat_engine.py` (prompt intake, routing, execution)
+- `src/server.py` + app service flow (API behavior)
+- `vscode-extension/` (editor workflow parity)
+- `src/tools/*` specialized capabilities (edit/fix/review/research/ops)
+- `tests/` acceptance and regression quality
+- docs + playbooks + roadmap artifacts in `docs/`
 
 Out of scope:
-- Proprietary cloud internals from external products
-- External telemetry/ranking systems not implemented in this codebase
+
+- Proprietary external internals from other products
+- Unsupported deployment targets not represented in this repo
 
 ---
 
-## 1) Capability Matrix (Baseline)
+## 2) Core Operating Flow (Must Follow)
 
-### A. Conversation & Intent
+Every request should follow this flow:
 
-- Greeting / capability summary
-- Repo understanding queries ("what can you tell me about this repo")
-- Task intent routing:
-  - generate
-  - edit / autofix
-  - review / debug / profile / coverage
-  - architecture / schema / diff visualization
-  - team/audit/rbac/analytics
-- Ambiguity handling: ask follow-up when intent confidence is low
+1. Prompt intake + normalization
+2. Intent routing + plan
+3. Local retrieval (repo-first)
+4. Knowledge-gap detection
+5. External research fallback (when needed)
+6. Reasoning + strategy selection
+7. Execution (answer/edit/run tools)
+8. Verification + repair loop
+9. Response + trace transparency
 
-### B. Coding Execution
-
-- Generate code with evaluation
-- Edit with instruction + patch flow
-- Autofix with retry strategy and rollback
-- Test execution and summary
-- Search/index/browse workspace context
-
-### C. Learning & Memory
-
-- Explicit teaching prompts:
-  - learn:
-  - teach:
-  - remember this
-  - note:
-- Persist lessons in project memory + team knowledge base
-- Apply learned preferences in relevant tasks (generate/autofix)
-- Support correction prompts to update/override old preferences
-
-### D. Team & Governance
-
-- Shared team knowledge recall
-- Audit trail visibility
-- RBAC checks
-- Cost and analytics snapshots
-
-### E. Extension UX Baseline
-
-- Ask command
-- Status check command
-- Chat panel
-- Panel history + retry
-- In-panel API health check + URL-aware errors
+Source of detailed stage behavior: `docs/COPILOT_LIKE_FLOW_BLUEPRINT.md`.
 
 ---
 
-## 2) Learning Data Schema (Baseline)
+## 3) Capability Matrix (Main Baseline v1)
 
-### Prompt Event
+### A. Prompt Understanding + Routing
 
-- id: string (trace id)
-- timestamp: ISO datetime
-- source: cli | api | extension
-- raw_prompt: string
-- normalized_prompt: string
-- intent: string
-- confidence: float
-- action_taken: string
-- result_status: success | partial | failure
+- Classify user intent reliably (question/edit/fix/review/research/ops)
+- Detect ambiguity and request clarification when confidence is low
+- Route to deterministic action contracts
 
-### Learned Preference
+### B. Repo Context + Retrieval
 
-- preference_id: string
-- timestamp: ISO datetime
-- user_scope: global | project | session
-- category: style | testing | safety | tooling | output_format | workflow
-- statement: string
-- origin_prompt: string
-- confidence: float
-- active: bool
-- supersedes: preference_id | null
+- File/symbol/test discovery
+- Semantic retrieval and context packing
+- Read-first policy before edits
+- Use project memory and prior successful fix memory
 
-### Correction Event
+### C. Reasoning + Planning
 
-- correction_id: string
-- timestamp: ISO datetime
-- target_preference_id: string | null
-- correction_type: replace | disable | strengthen
-- correction_text: string
-- applied: bool
+- Generate minimal step plan with completion criteria
+- Compare candidate approaches and pick safest effective option
+- Record assumptions and uncertainty
 
-### Retrieval Context
+### D. Research (External Fallback)
 
-- request_intent: string
-- selected_preferences: list[preference_id]
-- retrieval_reason: string per preference
+- Trigger web research when local evidence is insufficient or stale
+- Prefer official sources and version-matching docs
+- Capture source summary in trace when research is used
 
-### Output Trace
+### E. Code & Tool Execution
 
-- output_id: string
-- prompt_event_id: string
-- applied_preferences: list[preference_id]
-- tools_used: list[string]
-- eval_summary: string
+- Generate/edit/refactor with minimal diffs
+- Run appropriate tools and commands safely
+- Respect workspace boundaries and policy constraints
+
+### F. Verification + Repair
+
+- Run targeted tests first, then broader checks when needed
+- Parse failures and run bounded repair loops
+- Stop with blocker report if unresolved
+
+### G. Communication UX
+
+- Clear progress updates during longer work
+- Concise final summary with what changed and validation status
+- Explicit uncertainty and next steps
+
+### H. Learning (Folded Into Main Baseline)
+
+- Accept explicit teaching prompts (`learn`, `teach`, `remember`, `note`)
+- Persist lessons in project/team memory stores
+- Apply relevant lessons by intent and context
+- Support correction flow (replace/disable/strengthen)
+- Show which lessons/preferences were applied in trace
+
+### I. Governance + Ops
+
+- Approval and role-aware policy checks
+- Audit trail coverage for key actions
+- Budget/telemetry/compliance hooks remain available
 
 ---
 
-## 3) Evaluation Checklist (Baseline Acceptance)
+## 4) Baseline Data Contracts
 
-### Intent & Routing
+## Prompt Event
 
-- Greeting/capability prompts never route to code generation
-- Repo-understanding prompts route to repo-summary action
-- Misroute rate for top 20 prompt types under 10%
+- id
+- timestamp
+- source (`cli|api|extension`)
+- raw_prompt
+- normalized_prompt
+- intent
+- confidence
+- needs_external_research
+- action_taken
+- result_status (`success|partial|failure`)
 
-### Learning Behavior
+## Learning Records
 
-- Explicit teaching prompt persists lesson
-- Next relevant generate/autofix call includes learned preference block
-- Correction prompt updates preference behavior within next request
-- Duplicate lessons are deduplicated in retrieval
+- preference_id
+- scope (`global|project|session`)
+- category
+- statement
+- confidence
+- active
+- supersedes
 
-### Execution Quality
+## Correction Event
+
+- correction_id
+- target_preference_id
+- correction_type (`replace|disable|strengthen`)
+- correction_text
+- applied
+
+## Retrieval/Research Trace
+
+- request_intent
+- local_context_selected
+- research_trigger_reason
+- selected_sources (when research used)
+- selected_preferences
+
+## Output Trace
+
+- output_id
+- prompt_event_id
+- tools_used
+- applied_preferences
+- verification_summary
+
+---
+
+## 5) Baseline Acceptance Checklist
+
+## Intent + Routing
+
+- Greeting/help prompts do not misroute to heavy code actions
+- Repo-summary prompts route correctly
+- Low-confidence prompts produce clarification or research path
+
+## Research + Reasoning
+
+- Unknown/outdated questions trigger research-first branch
+- Responses avoid fabricated external facts
+- Uncertainty is explicit when evidence is partial
+
+## Execution Quality
 
 - No crash on empty/short prompts
-- No blocking startup due to heavy context preloads
-- API endpoint /v1/aicode/command responds under 2s for simple prompts (status/help)
+- Edits remain scoped and reversible
+- Verification runs for code-changing tasks
 
-### UX & Operability
+## Learning Behavior
 
-- Extension panel can check API health in one click
-- Error surfaces include request URL
-- History + retry works for repeated prompts
+- Teaching prompt persists lesson
+- Next relevant request applies lesson
+- Correction updates behavior quickly
+- Duplicate lessons are deduplicated in retrieval
 
-### Safety & Consistency
+## UX + Operability
 
-- Preference application is scoped (not blindly applied to unrelated intents)
-- Conflicting preferences resolve by recency + explicit correction
-- Audit trail includes learning and correction actions
+- API simple commands are responsive
+- Extension can run core ask/status workflows
+- Errors include actionable context
 
----
+## Safety + Governance
 
-## 4) Implementation Order (4-Week Baseline)
-
-### Week 1 — Routing Baseline
-
-1. Add prompt taxonomy map for top 20 intents
-2. Add dedicated repo-understanding action and handler
-3. Add fallback clarification question flow for low-confidence parsing
-4. Add routing regression tests by intent bucket
-
-### Week 2 — Learning Core
-
-1. Finalize learned-preference schema + storage utilities
-2. Add correction-update pipeline (replace/disable/strengthen)
-3. Add scoped retrieval (intent-aware top-k preferences)
-4. Add tests for persistence, retrieval, correction, dedupe
-
-### Week 3 — Quality + Transparency
-
-1. Add applied-preference trace in responses/logs
-2. Add evaluation harness for baseline prompts
-3. Add metrics: routing accuracy, preference hit rate, correction success rate
-4. Add startup performance checks for API path
-
-### Week 4 — Productization Baseline
-
-1. Add extension controls for “show applied preferences” and “clear learned preference”
-2. Add export/import for learned preferences
-3. Add docs and operator playbook for maintaining learning quality
-4. Freeze Baseline v1 and open Baseline v1.1 backlog
+- Policy checks enforced where required
+- Audit trail includes learning/research/execution actions
 
 ---
 
-## Definition of Done (Baseline v1)
+## 6) Implementation Order (Baseline v1)
 
-- Capability matrix fully implemented for baseline intents
-- Learning loop works end-to-end (teach -> persist -> apply -> correct)
-- Acceptance checklist passes in CI
-- Extension panel supports reliable operational debugging
-- Team can run and evaluate baseline with repeatable scripts
+### Phase 1 — Routing + Confidence
+
+1. Normalize intent taxonomy for top workflows
+2. Add confidence scoring and low-confidence handling
+3. Add explicit `needs_external_research` decision field
+
+### Phase 2 — Research Path
+
+1. Wire research-first branch into chat engine pipeline
+2. Add source prioritization (official docs first)
+3. Add research trace metadata in logs
+
+### Phase 3 — Learning Integration
+
+1. Ensure teach -> persist -> retrieve -> apply loop is deterministic
+2. Ensure correction pipeline updates active preferences
+3. Add preference-application visibility in responses/traces
+
+### Phase 4 — Validation + Productization
+
+1. Add benchmark prompts for reasoning/research quality
+2. Add metrics dashboards for routing/research/learning outcomes
+3. Lock CI acceptance gates for baseline checklist
+
+---
+
+## 7) Weekly Metrics
+
+- Routing accuracy
+- Research trigger precision/recall
+- Factual correction rate after research
+- First-pass task success rate
+- Repair-loop success rate
+- Preference hit rate on relevant requests
+- User correction rate per 100 prompts
+- Mean time to useful answer
+
+---
+
+## Definition of Done (Main Baseline v1)
+
+Baseline v1 is complete when:
+
+1. Copilot-like flow is consistently followed across CLI/API/extension paths.
+2. `aicode` reliably detects unknowns and triggers research when needed.
+3. Learning loop works end-to-end (teach -> apply -> correct).
+4. Code tasks are verified with safe, bounded repair behavior.
+5. Acceptance checklist is automated and passing in CI.

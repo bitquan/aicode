@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 from src.tools.autofix import run_autofix_loop
@@ -157,22 +158,58 @@ def _handle_help_summary(engine: "ChatEngine", request: dict[str, Any]) -> str:
     server = awareness["server"]
     ollama = awareness["ollama"]
     web = awareness["web"]
-    self_improvement = awareness.get("self_improvement", {})
-    commands_preview = ", ".join(awareness["commands"][:10])
+    raw_prompt = str(request.get("raw_input", "")).strip().lower()
+    commands = awareness["commands"]
+    prefers_human_style = engine.prefers_conversational_responses("help_summary")
+
+    asks_for_five = bool(re.search(r"\b(5|five)\b", raw_prompt)) and any(
+        phrase in raw_prompt for phrase in ("things", "can you do", "what can")
+    )
+    asks_for_tone_improvement = any(
+        phrase in raw_prompt
+        for phrase in (
+            "improve on how you talk",
+            "talk to users",
+            "how you talk",
+            "communication",
+        )
+    )
+
     engine._log_interaction("help", "help_summary", True)
+
+    if asks_for_tone_improvement:
+        return (
+            "Absolutely — and I can start now.\n"
+            "One immediate improvement: keep answers shorter, clearer, and focused on your exact next action.\n"
+            "If you want, I can use this response style by default: concise summary, concrete change, and clear next step."
+        )
+
+    if asks_for_five:
+        return (
+            "Here are 5 things I can do for this repo right now:\n"
+            "1) Implement or refactor code in specific files.\n"
+            "2) Debug failing behavior and fix root causes.\n"
+            "3) Run and interpret tests, then patch regressions.\n"
+            "4) Improve architecture/quality tools (coverage, safety, performance).\n"
+            "5) Build repo-aware plans and execute them end-to-end.\n"
+            "Tell me one target file or one goal, and I’ll start immediately."
+        )
+
+    if prefers_human_style:
+        return (
+            "I can help with the real work: implement features, fix bugs, run tests, and improve the repo without big risky diffs.\n"
+            f"Right now, the server is {'up' if server['reachable'] else 'down'} and Ollama is {'reachable' if ollama['reachable'] else 'unreachable'}.\n"
+            f"Best next step: give me one file or one goal. Example actions: {', '.join(commands[:6])}."
+        )
+
     return (
-        "👋 I can help with coding tasks across your repo.\n"
-        "  • Build/Edit/Fix code: write, fix, autofix, review, debug, profile\n"
-        "  • Quality & Ops: coverage, security scan, deps, cost optimize, status\n"
-        "  • Team tools: team kb, audit trail, rbac, team analytics\n"
-        "  • Architecture tools: analyze diagram, analyze schema, visualize diff\n"
-        f"  • Self-awareness: VS Code panel = {awareness['known_surfaces']['vscode_panel']}\n"
-        f"    Server = {'up' if server['reachable'] else 'down'} at {server['url']}\n"
-        f"    Ollama = {'reachable' if ollama['reachable'] else 'unreachable'} at {ollama['url']}\n"
-        f"    Web research = {web['summary']}\n"
-        f"    Self-improvement mode = {self_improvement.get('mode')} (latest run: {self_improvement.get('latest_run_id') or 'none'})\n"
-        f"  • Executable actions: {commands_preview}, ...\n"
-        "Try: 'status', 'readiness', 'self-improve plan add a clear chat button to the VS Code panel', or 'analyze schema'."
+        "I’m your repo-focused coding partner.\n"
+        "I can implement features, fix bugs, run tests, and improve architecture with minimal safe diffs.\n"
+        f"Runtime: server is {'up' if server['reachable'] else 'down'} at {server['url']}, "
+        f"Ollama is {'reachable' if ollama['reachable'] else 'unreachable'} at {ollama['url']}.\n"
+        f"VS Code panel: {awareness['known_surfaces']['vscode_panel']}. Web research: {web['summary']}.\n"
+        f"Top actions: {', '.join(commands[:8])}.\n"
+        "Try: 'status', 'review src/server.py', or 'fix src/main.py'."
     )
 
 
@@ -193,9 +230,23 @@ def _handle_self_aware_summary(engine: "ChatEngine", request: dict[str, Any]) ->
     server = awareness["server"]
     ollama = awareness["ollama"]
     web = awareness["web"]
+    confidence_policy = awareness.get("confidence_policy", {})
+    recent = awareness.get("recent_decision_metrics", {})
     self_improvement = awareness.get("self_improvement", {})
     commands_preview = ", ".join(awareness["commands"][:14])
+    prefers_human_style = engine.prefers_conversational_responses("self_aware_summary")
     engine._log_interaction("self aware", "self_aware_summary", True)
+
+    if prefers_human_style:
+        return (
+            "Here’s the quick self-check.\n"
+            f"Server: {'up' if server['reachable'] else 'down'} at {server['url']}. Ollama: {'reachable' if ollama['reachable'] else 'unreachable'} at {ollama['url']}.\n"
+            f"VS Code panel: {awareness['known_surfaces']['vscode_panel']}. Web research: {web['summary']}.\n"
+            f"Decision quality: avg confidence {recent.get('avg_confidence', 0.0)}, reroute rate {recent.get('reroute_rate', 0.0)}.\n"
+            f"Self-improvement mode: {self_improvement.get('mode')} (latest run: {self_improvement.get('latest_run_id') or 'none'}).\n"
+            f"If you want more detail, I can break down commands next: {commands_preview}."
+        )
+
     return (
         "🪞 Self-Awareness Snapshot\n"
         f"  • VS Code panel: {awareness['known_surfaces']['vscode_panel']}\n"
@@ -203,6 +254,11 @@ def _handle_self_aware_summary(engine: "ChatEngine", request: dict[str, Any]) ->
         f"  • Server: {'up' if server['reachable'] else 'down'} ({server['url']})\n"
         f"  • Ollama: {'reachable' if ollama['reachable'] else 'unreachable'} ({ollama['url']})\n"
         f"  • Web research: {web['summary']}\n"
+        f"  • Low-confidence threshold: {confidence_policy.get('low_confidence_research_threshold', 'n/a')}\n"
+        f"  • Recent avg confidence: {recent.get('avg_confidence', 0.0)}\n"
+        f"  • Recent reroute rate: {recent.get('reroute_rate', 0.0)}\n"
+        f"  • Recent research trigger rate: {recent.get('research_trigger_rate', 0.0)}\n"
+        f"  • Decision alerts: {len(recent.get('alerts', []))} ({recent.get('highest_alert_severity', 'none')})\n"
         f"  • Self-improvement mode: {self_improvement.get('mode')}\n"
         f"  • Latest run: {self_improvement.get('latest_run_id') or 'none'} ({self_improvement.get('latest_state') or 'idle'})\n"
         f"  • Last accepted run: {self_improvement.get('last_accepted_run') or 'none'}\n"

@@ -9,6 +9,7 @@ from src.tools.self_improve import (
     apply_self_improvement_run,
     build_self_improvement_status_snapshot,
     create_self_improvement_plan,
+    format_self_improvement_run,
 )
 
 
@@ -50,7 +51,10 @@ def test_create_self_improvement_plan_from_explicit_goal(monkeypatch, tmp_path):
     assert run["goal"] == "add a clear chat button to the VS Code panel"
     assert run["candidate"]["category"] == "explicit_goal"
     assert run["likely_files"][0]["path"] == "vscode-extension/src/extension.ts"
+    assert run["pinned_files"] == []
+    assert run["approved_files"] == ["vscode-extension/src/extension.ts"]
     assert run["verification_plan"][-1] == "Run readiness canaries"
+    assert "Approve run with files: vscode-extension/src/extension.ts" in format_self_improvement_run(run)
     assert build_self_improvement_status_snapshot(str(tmp_path))["latest_run_id"] == run["run_id"]
 
 
@@ -87,6 +91,34 @@ def test_create_self_improvement_plan_uses_failing_canary_when_no_goal(monkeypat
 
     assert run["candidate"]["category"] == "readiness_canary"
     assert run["goal"] == "Add a Clear Chat button to the VS Code panel"
+
+
+def test_create_self_improvement_plan_pins_explicit_paths(monkeypatch, tmp_path):
+    engine = _engine(tmp_path)
+    monkeypatch.setattr(
+        "src.tools.self_improve.build_research_payload",
+        lambda engine, goal, prefer_web=False: {
+            "goal": goal,
+            "likely_files": [{"path": "src/server.py", "reason": "semantic match", "score": 8}],
+            "verification_plan": ["./.venv/bin/python -m pytest -q tests/test_server.py"],
+            "verification_plan_steps": [
+                {"kind": "command", "label": "targeted", "command": "./.venv/bin/python -m pytest -q tests/test_server.py"}
+            ],
+            "web": {"enabled": True},
+            "web_research_used": False,
+        },
+    )
+
+    run = create_self_improvement_plan(
+        str(tmp_path),
+        engine,
+        goal="improve src/tools/self_improve.py blocked state wording",
+    )
+
+    assert run["pinned_files"] == ["src/tools/self_improve.py"]
+    assert run["approved_files"] == ["src/tools/self_improve.py"]
+    assert run["likely_files"][0]["path"] == "src/tools/self_improve.py"
+    assert "Approve run with files: src/tools/self_improve.py" in format_self_improvement_run(run)
 
 
 def test_apply_self_improvement_blocks_dirty_targets(monkeypatch, tmp_path):
@@ -170,3 +202,53 @@ def test_apply_self_improvement_rolls_back_on_verification_failure(monkeypatch, 
     assert applied["state"] == "rolled_back"
     assert applied["rollback_performed"] is True
     assert target.read_text(encoding="utf-8") == original
+
+
+def test_apply_self_improvement_rejects_targets_outside_approved_allowlist(monkeypatch, tmp_path):
+    target = tmp_path / "src" / "other_file.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("print('old')\n", encoding="utf-8")
+    engine = _engine(tmp_path)
+    monkeypatch.setattr(
+        "src.tools.self_improve.build_research_payload",
+        lambda engine, goal, prefer_web=False: {
+            "goal": goal,
+            "likely_files": [{"path": "src/self_improve.py", "reason": "repo match", "score": 8}],
+            "verification_plan": ["./.venv/bin/python -m pytest -q tests/test_self_improve.py"],
+            "verification_plan_steps": [
+                {
+                    "kind": "command",
+                    "label": "targeted",
+                    "command": "./.venv/bin/python -m pytest -q tests/test_self_improve.py",
+                }
+            ],
+            "web": {"enabled": True},
+            "web_research_used": False,
+        },
+    )
+
+    run = create_self_improvement_plan(
+        str(tmp_path),
+        engine,
+        goal="improve src/self_improve.py wording",
+    )
+    run["approved_files"] = ["src/self_improve.py"]
+
+    monkeypatch.setattr("src.tools.self_improve.get_self_improvement_run", lambda workspace_root, run_id: run)
+    monkeypatch.setattr(
+        "src.tools.self_improve._generate_edit_proposals",
+        lambda workspace_root, engine, run, target_paths: [
+            {
+                "path": "src/other_file.py",
+                "original": "print('old')\n",
+                "updated": "print('new')\n",
+                "diff": "---",
+                "changed_lines": 1,
+            }
+        ],
+    )
+    applied = apply_self_improvement_run(str(tmp_path), engine, run["run_id"])
+
+    assert applied["state"] == "approved"
+    assert "outside approved allowlist" in str(applied["blocked_reason"])
+    engine.agent.rewrite_file.assert_not_called()

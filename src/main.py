@@ -24,12 +24,20 @@ from src.tools.compliance_summary import build_compliance_summary
 from src.tools.context_packer import pack_context
 from src.tools.cost_attribution import summarize_costs_by_trace
 from src.tools.dependency_inventory import read_dependency_inventory
+from src.tools.decision_timeline import build_decision_timeline
 from src.tools.docs_assistant import build_doc_update
 from src.tools.eval_runner import run_evaluation_suite
 from src.tools.fix_memory import retrieve_similar_fixes
 from src.tools.gate_runner import run_regression_gate
 from src.tools.incident_automation import build_incident_timeline, generate_incident_report
 from src.tools.license_scanner import scan_dependency_licenses
+from src.tools.live_mode import (
+    SLICE_CATALOG,
+    load_live_mode_state,
+    run_live_mode,
+    save_live_mode_state,
+    unlock_slice,
+)
 from src.tools.logger import load_audit_events
 from src.tools.patch_applier import apply_file_edit, preview_diff
 from src.tools.patch_guard import validate_unified_diff
@@ -83,6 +91,7 @@ def _print_usage():
     print("  python -m src.main policy-check <action> [--role ROLE] [--auto]")
     print("  python -m src.main gate [test_command]")
     print("  python -m src.main telemetry")
+    print("  python -m src.main decision-timeline [--limit N]")
     print("  python -m src.main release-notes <version>")
     print("  python -m src.main audit-export <trace_id>")
     print("  python -m src.main retention-clean [--days N]")
@@ -101,6 +110,10 @@ def _print_usage():
     print("  python -m src.main status [--full]")
     print("  python -m src.main status-export [--full]")
     print("  python -m src.main self-improve [--cycles N] [--target-score X]")
+    print("  python -m src.main live [--interval N] [--iterations N] [--allow-unlocked]")
+    print("  python -m src.main live status")
+    print("  python -m src.main live unlock <slice>")
+    print("  python -m src.main live reset")
     print("  python -m src.main resume-autofix <trace_id>")
     print("  python -m src.main eval")
 
@@ -349,6 +362,15 @@ def main():
         print(summarize_telemetry(str(Path.cwd())))
         return
 
+    if args and args[0] == "decision-timeline":
+        limit = 200
+        if "--limit" in args:
+            idx = args.index("--limit")
+            if idx + 1 < len(args):
+                limit = int(args[idx + 1])
+        print(build_decision_timeline(str(Path.cwd()), limit=limit))
+        return
+
     if args and args[0] == "release-notes":
         if len(args) != 2:
             print("Usage: python -m src.main release-notes <version>")
@@ -533,6 +555,67 @@ def main():
 
         result = service.run_command(command, source="cli")
         print(result["response"])
+        return
+
+    if args and args[0] == "live":
+        if len(args) >= 2 and args[1] == "status":
+            state = load_live_mode_state(str(Path.cwd()))
+            print(
+                {
+                    "state": state,
+                    "slice_catalog": SLICE_CATALOG,
+                }
+            )
+            return
+
+        if len(args) >= 2 and args[1] == "unlock":
+            if len(args) < 3:
+                print("Usage: python -m src.main live unlock <slice>")
+                return
+            print(unlock_slice(str(Path.cwd()), args[2].strip()))
+            return
+
+        if len(args) >= 2 and args[1] == "reset":
+            baseline = {
+                "enabled": False,
+                "mode": "learning_only",
+                "points": 0,
+                "cycles": 0,
+                "unlocked_slices": ["learn"],
+                "last_cycle_at": None,
+                "last_cycle_summary": {},
+            }
+            print(save_live_mode_state(str(Path.cwd()), baseline))
+            return
+
+        interval = 30
+        iterations = 0
+        allow_unlocked_slices = "--allow-unlocked" in args
+
+        clean_args = [arg for arg in args[1:] if arg != "--allow-unlocked"]
+
+        if "--interval" in clean_args:
+            idx = clean_args.index("--interval")
+            if idx + 1 >= len(clean_args):
+                print("Usage: python -m src.main live [--interval N] [--iterations N] [--allow-unlocked]")
+                return
+            interval = int(clean_args[idx + 1])
+
+        if "--iterations" in clean_args:
+            idx = clean_args.index("--iterations")
+            if idx + 1 >= len(clean_args):
+                print("Usage: python -m src.main live [--interval N] [--iterations N] [--allow-unlocked]")
+                return
+            iterations = int(clean_args[idx + 1])
+
+        print(
+            run_live_mode(
+                str(Path.cwd()),
+                interval_seconds=interval,
+                iterations=iterations,
+                allow_unlocked_slices=allow_unlocked_slices,
+            )
+        )
         return
 
     if args and args[0] == "resume-autofix":
