@@ -1,9 +1,11 @@
 src/**
 smoke/**
+scripts/**
 node_modules/**
 .vscode-test/**
 dist/**
 tsconfig.json
 *.map
 .gitignore
+tmp_*.js
 out/**/*.map

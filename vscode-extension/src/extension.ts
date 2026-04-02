@@ -5,15 +5,28 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import {
   buildOllamaGuidance,
+  compareWorkspaceBuilds,
+  describeWorkspaceBuildMissing,
+  detectExtensionRuntimeMode,
   describeRuntimeMismatch,
   discoverServerRoot,
+  discoverWorkspaceExtensionRoot,
+  formatExtensionBuildSummary,
+  formatHealthSummaryMessage,
+  formatRuntimeStatusLabel,
+  formatServerRuntimeSummary,
   isValidServerRoot,
+  loadExtensionBuildInfo,
   loadRuntimeManifest,
   looksLikeEditInstruction,
   normalizeOllamaHealth,
   shouldFallbackToNonStreaming,
+  validateExtensionBuildInfo,
+  type ExtensionBuildInfo,
+  type ExtensionBuildSnapshot,
   type OllamaHealth,
   type RuntimeMetadata,
+  type WorkspaceBuildComparison,
 } from './runtime_support';
 
 type ActionEvent = {
@@ -31,6 +44,7 @@ type AppCommandResponse = {
   action: string;
   confidence: number;
   response: string;
+  next_step?: string;
   events?: ActionEvent[];
 };
 
@@ -95,6 +109,10 @@ type ServerStatusSnapshot = {
   text: string;
   detail: string;
   healthy: boolean;
+  extensionBuild?: ExtensionBuildInfo;
+  workspaceBuildComparison?: WorkspaceBuildComparison;
+  integrityIssue?: string;
+  serverRuntime?: RuntimeMetadata;
 };
 
 type StreamEventPayload = Record<string, unknown>;
@@ -115,6 +133,18 @@ type StreamCallbacks = {
 
 function getConfiguration(): vscode.WorkspaceConfiguration {
   return vscode.workspace.getConfiguration('aicode');
+}
+
+function shouldStopManagedServerOnDeactivate(): boolean {
+  return Boolean(getConfiguration().get('stopServerOnDeactivate', true));
+}
+
+function shouldAutoStartOllama(): boolean {
+  return Boolean(getConfiguration().get('autoStartOllama', true));
+}
+
+function shouldUseIntegratedTerminal(): boolean {
+  return Boolean(getConfiguration().get('showManagedProcessesInTerminal', true));
 }
 
 function normalizeBaseUrl(): string {
@@ -260,16 +290,90 @@ class ActionLogStore implements vscode.Disposable {
   }
 }
 
+class SidebarQuickActionsProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
+  getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
+    return element;
+  }
+
+  getChildren(): vscode.ProviderResult<vscode.TreeItem[]> {
+    const openPanel = new vscode.TreeItem('Open Chat Panel', vscode.TreeItemCollapsibleState.None);
+    openPanel.command = { command: 'aicode.openPanel', title: 'Open Chat Panel' };
+    openPanel.description = 'Primary workspace';
+    openPanel.iconPath = new vscode.ThemeIcon('comment-discussion');
+
+    const ask = new vscode.TreeItem('Ask Aicode', vscode.TreeItemCollapsibleState.None);
+    ask.command = { command: 'aicode.ask', title: 'Ask Aicode' };
+    ask.description = 'Quick command';
+    ask.iconPath = new vscode.ThemeIcon('send');
+
+    const status = new vscode.TreeItem('Check Runtime Status', vscode.TreeItemCollapsibleState.None);
+    status.command = { command: 'aicode.status', title: 'Check Runtime Status' };
+    status.description = 'Server + model health';
+    status.iconPath = new vscode.ThemeIcon('pulse');
+
+    const restart = new vscode.TreeItem('Restart Local Server', vscode.TreeItemCollapsibleState.None);
+    restart.command = { command: 'aicode.restartServer', title: 'Restart Local Server' };
+    restart.description = 'Managed process';
+    restart.iconPath = new vscode.ThemeIcon('debug-restart');
+
+    return [openPanel, ask, status, restart];
+  }
+}
+
+class BuildRuntimeInspector {
+  constructor(private readonly context: vscode.ExtensionContext) {}
+
+  private workspaceFolderPaths(): string[] {
+    return (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath);
+  }
+
+  workspaceExtensionRoot(): string | undefined {
+    return discoverWorkspaceExtensionRoot(this.workspaceFolderPaths());
+  }
+
+  snapshot(): ExtensionBuildSnapshot {
+    const workspaceExtensionRoot = this.workspaceExtensionRoot();
+    const runtimeMode = detectExtensionRuntimeMode(this.context.extensionPath, workspaceExtensionRoot);
+    const loaded = loadExtensionBuildInfo(this.context.extensionPath, runtimeMode);
+    const workspace = workspaceExtensionRoot
+      ? loadExtensionBuildInfo(workspaceExtensionRoot, 'workspace')
+      : undefined;
+    const integrityIssue = validateExtensionBuildInfo(this.context.extensionPath, loaded);
+
+    let workspaceBuildComparison: WorkspaceBuildComparison | undefined;
+    if (runtimeMode === 'development-host' && loaded) {
+      workspaceBuildComparison = compareWorkspaceBuilds(loaded, workspace ?? loaded);
+    } else if (workspaceExtensionRoot) {
+      workspaceBuildComparison = workspace
+        ? compareWorkspaceBuilds(loaded, workspace)
+        : describeWorkspaceBuildMissing();
+    }
+
+    return {
+      extensionBuild: loaded,
+      workspaceBuildComparison,
+      integrityIssue,
+    };
+  }
+}
+
 class ServerManager implements vscode.Disposable {
   private child: ChildProcess | undefined;
   private startedByExtension = false;
+  private ollamaChild: ChildProcess | undefined;
+  private startedOllamaByExtension = false;
+  private serverTerminal: vscode.Terminal | undefined;
+  private ollamaTerminal: vscode.Terminal | undefined;
   private readonly statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   private readonly emitter = new vscode.EventEmitter<ServerStatusSnapshot>();
   private readonly healthTimer: ReturnType<typeof setInterval>;
   private lastOutputLines: string[] = [];
   private lastExitDetail = 'No server process launched yet.';
+  private lastOllamaExitDetail = 'No Ollama process launched yet.';
   private lastHealth: HealthResponse | undefined;
   private lastRuntimeMismatch = '';
+  private lastBuildComparisonDetail = '';
+  private lastBuildIntegrityIssue = '';
   private status: ServerStatusSnapshot = {
     text: '$(circle-large-outline) aicode',
     detail: `Server not connected (${healthUrl()})`,
@@ -282,11 +386,14 @@ class ServerManager implements vscode.Disposable {
     private readonly context: vscode.ExtensionContext,
     private readonly output: vscode.OutputChannel,
     private readonly actionLog: ActionLogStore,
+    private readonly buildInspector: BuildRuntimeInspector,
   ) {
     this.statusBar.command = 'aicode.status';
     this.statusBar.tooltip = this.status.detail;
     this.statusBar.text = this.status.text;
     this.statusBar.show();
+    this.status = this.buildStatusSnapshot(this.status.text, this.status.detail, this.status.healthy);
+    this.statusBar.tooltip = this.status.detail;
 
     this.healthTimer = setInterval(() => {
       void this.refreshHealth(false);
@@ -305,8 +412,47 @@ class ServerManager implements vscode.Disposable {
     return Boolean(getConfiguration().get('autoStartServer', true));
   }
 
+  autoStartOllamaEnabled(): boolean {
+    return shouldAutoStartOllama();
+  }
+
+  isManagedServerRunning(): boolean {
+    return Boolean(
+      this.startedByExtension
+      && ((this.child && this.child.exitCode === null) || this.serverTerminal),
+    );
+  }
+
+  isManagedOllamaRunning(): boolean {
+    return Boolean(
+      this.startedOllamaByExtension
+      && ((this.ollamaChild && this.ollamaChild.exitCode === null) || this.ollamaTerminal),
+    );
+  }
+
+  handleTerminalClosed(terminal: vscode.Terminal): void {
+    if (this.serverTerminal && terminal === this.serverTerminal) {
+      this.serverTerminal = undefined;
+      if (this.startedByExtension && !(this.child && this.child.exitCode === null)) {
+        this.lastExitDetail = 'Server terminal closed.';
+        this.startedByExtension = false;
+      }
+    }
+    if (this.ollamaTerminal && terminal === this.ollamaTerminal) {
+      this.ollamaTerminal = undefined;
+      if (this.startedOllamaByExtension && !(this.ollamaChild && this.ollamaChild.exitCode === null)) {
+        this.lastOllamaExitDetail = 'Ollama terminal closed.';
+        this.startedOllamaByExtension = false;
+      }
+    }
+  }
+
   getStatus(): ServerStatusSnapshot {
     return { ...this.status };
+  }
+
+  getBuildSnapshot(): ExtensionBuildSnapshot {
+    return this.buildInspector.snapshot();
   }
 
   async ensureRunning(): Promise<HealthResponse> {
@@ -325,7 +471,15 @@ class ServerManager implements vscode.Disposable {
 
   async ensureModelReady(): Promise<HealthResponse> {
     const health = await this.ensureRunning();
-    const ollama = normalizeOllamaHealth(health, health.base_url);
+    let ollama = normalizeOllamaHealth(health, health.base_url);
+    if (!ollama.reachable && this.autoStartOllamaEnabled()) {
+      await this.startOllamaServe(health.base_url);
+      ollama = await this.waitForOllamaReady(health.base_url, 20000);
+      const refreshed = await this.refreshHealth(false);
+      if (refreshed) {
+        return refreshed;
+      }
+    }
     if (!ollama.reachable) {
       throw new Error(
         await this.buildDiagnosticsMessage(
@@ -412,14 +566,40 @@ class ServerManager implements vscode.Disposable {
     return existing ?? 'python3';
   }
 
+  private resolveOllamaPath(): string {
+    const configured = String(getConfiguration().get('ollamaPath', '')).trim();
+    if (!configured) {
+      return process.platform === 'darwin' ? '/opt/homebrew/bin/ollama' : 'ollama';
+    }
+    return path.isAbsolute(configured) ? configured : path.resolve(this.configBaseDir(), configured);
+  }
+
   private updateStatus(text: string, detail: string, healthy: boolean): void {
-    this.status = { text, detail, healthy };
-    this.statusBar.text = text;
-    this.statusBar.tooltip = detail;
-    this.statusBar.backgroundColor = healthy
+    this.status = this.buildStatusSnapshot(text, detail, healthy, this.lastHealth?.runtime);
+    this.statusBar.text = this.status.text;
+    this.statusBar.tooltip = this.status.detail;
+    this.statusBar.backgroundColor = this.status.healthy
       ? undefined
       : new vscode.ThemeColor('statusBarItem.warningBackground');
     this.emitter.fire(this.getStatus());
+  }
+
+  private buildStatusSnapshot(
+    text: string,
+    detail: string,
+    healthy: boolean,
+    serverRuntime?: RuntimeMetadata,
+  ): ServerStatusSnapshot {
+    const buildSnapshot = this.getBuildSnapshot();
+    return {
+      text,
+      detail,
+      healthy,
+      extensionBuild: buildSnapshot.extensionBuild,
+      workspaceBuildComparison: buildSnapshot.workspaceBuildComparison,
+      integrityIssue: buildSnapshot.integrityIssue,
+      serverRuntime,
+    };
   }
 
   private currentLaunchConfig(): {
@@ -456,6 +636,7 @@ class ServerManager implements vscode.Disposable {
 
   private async buildDiagnosticsMessage(reason: string): Promise<string> {
     const launch = this.currentLaunchConfig();
+    const buildSnapshot = this.getBuildSnapshot();
     const ollama =
       this.lastHealth?.ollama && typeof this.lastHealth.ollama === 'object'
         ? normalizeOllamaHealth(this.lastHealth, this.lastHealth.base_url)
@@ -469,14 +650,23 @@ class ServerManager implements vscode.Disposable {
       `Workspace root: ${launch.workspaceRoot}`,
       `Launch command: ${launch.launchCommand}`,
       `Last process exit: ${this.lastExitDetail}`,
+      `Ollama launch command: ${this.resolveOllamaPath()} serve`,
+      `Last Ollama process exit: ${this.lastOllamaExitDetail}`,
       `Ollama URL: ${ollamaBase}`,
       `Ollama status: ${ollama.reachable ? 'reachable' : 'unreachable'} (${ollama.detail})`,
+      formatExtensionBuildSummary(buildSnapshot.extensionBuild),
     ];
     const runtimeMismatch = this.runtimeMismatch(this.lastHealth);
     if (this.lastHealth?.runtime) {
       lines.push(
         `Server runtime: app=${this.lastHealth.runtime.app_version} routing=${this.lastHealth.runtime.routing_generation} started=${this.lastHealth.runtime.started_at ?? 'unknown'}`,
       );
+    }
+    if (buildSnapshot.workspaceBuildComparison?.detail) {
+      lines.push(buildSnapshot.workspaceBuildComparison.detail);
+    }
+    if (buildSnapshot.integrityIssue) {
+      lines.push(`Extension integrity: ${buildSnapshot.integrityIssue}`);
     }
     if (runtimeMismatch) {
       lines.push(runtimeMismatch);
@@ -551,22 +741,45 @@ class ServerManager implements vscode.Disposable {
         ? `Ollama ready (${health.model})`
         : `Ollama unavailable (${health.ollama.detail}). ${buildOllamaGuidance(health.base_url)}`;
       const runtimeMismatch = this.runtimeMismatch(health);
+      const buildSnapshot = this.getBuildSnapshot();
       if (runtimeMismatch && runtimeMismatch !== this.lastRuntimeMismatch) {
         this.actionLog.append('runtime', runtimeMismatch, 'extension');
       }
+      if (
+        buildSnapshot.workspaceBuildComparison?.state === 'stale-install'
+        && buildSnapshot.workspaceBuildComparison.detail !== this.lastBuildComparisonDetail
+      ) {
+        this.actionLog.append('build', buildSnapshot.workspaceBuildComparison.detail, 'extension');
+      }
+      if (
+        buildSnapshot.integrityIssue
+        && buildSnapshot.integrityIssue !== this.lastBuildIntegrityIssue
+      ) {
+        this.actionLog.append('build', buildSnapshot.integrityIssue, 'extension');
+      }
+      this.lastBuildComparisonDetail = buildSnapshot.workspaceBuildComparison?.detail ?? '';
+      this.lastBuildIntegrityIssue = buildSnapshot.integrityIssue ?? '';
       this.lastRuntimeMismatch = runtimeMismatch || '';
+      const overallHealthy = Boolean(
+        health.ollama.reachable
+        && !runtimeMismatch
+        && !buildSnapshot.integrityIssue
+        && buildSnapshot.workspaceBuildComparison?.state !== 'stale-install',
+      );
       this.updateStatus(
-        health.ollama.reachable && !runtimeMismatch ? '$(check) aicode' : '$(warning) aicode',
+        overallHealthy ? '$(check) aicode' : '$(warning) aicode',
         runtimeMismatch
           ? `${runtimeMismatch} ${ollamaDetail}`
-          : `Server ready at ${this.baseUrl()} using ${health.model}. ${ollamaDetail}`,
-        health.ollama.reachable && !runtimeMismatch,
+          : formatHealthSummaryMessage(health, this.baseUrl()),
+        overallHealthy,
       );
       return health;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.lastHealth = undefined;
       this.lastRuntimeMismatch = '';
+      this.lastBuildComparisonDetail = '';
+      this.lastBuildIntegrityIssue = '';
       this.updateStatus('$(warning) aicode', `Server not reachable: ${message}`, false);
       if (showErrors) {
         const choice = await vscode.window.showWarningMessage(
@@ -588,6 +801,10 @@ class ServerManager implements vscode.Disposable {
     if (this.child && this.child.exitCode === null) {
       return;
     }
+    if (this.serverTerminal) {
+      this.serverTerminal.show(true);
+      return;
+    }
 
     const { pythonPath, serverRoot, workspaceRoot, launchCommand } = this.currentLaunchConfig();
     if (!isValidServerRoot(serverRoot)) {
@@ -604,6 +821,24 @@ class ServerManager implements vscode.Disposable {
     this.lastExitDetail = 'Server launch in progress.';
     this.updateStatus('$(sync~spin) aicode', `Starting local server in ${serverRoot}`, false);
 
+    if (shouldUseIntegratedTerminal()) {
+      const terminal = vscode.window.createTerminal({
+        name: 'aicode server',
+        cwd: serverRoot,
+        env: {
+          ...process.env,
+          WORKSPACE_ROOT: workspaceRoot,
+          PYTHONUNBUFFERED: '1',
+        },
+      });
+      this.serverTerminal = terminal;
+      this.startedByExtension = true;
+      this.lastExitDetail = 'Server running in integrated terminal.';
+      terminal.show(true);
+      terminal.sendText(`"${pythonPath}" -m src.server`, true);
+      return;
+    }
+
     const child = spawn(pythonPath, ['-m', 'src.server'], {
       cwd: serverRoot,
       env: {
@@ -619,7 +854,91 @@ class ServerManager implements vscode.Disposable {
     this.wireChildProcess(child);
   }
 
+  private async startOllamaServe(baseUrl: string): Promise<void> {
+    const probe = await checkOllamaHealth(baseUrl, 1000);
+    if (probe.reachable) {
+      this.actionLog.append('ollama', `Ollama already reachable at ${baseUrl}`, 'extension');
+      return;
+    }
+    if (this.ollamaChild && this.ollamaChild.exitCode === null) {
+      return;
+    }
+    if (this.ollamaTerminal) {
+      this.ollamaTerminal.show(true);
+      return;
+    }
+
+    const ollamaPath = this.resolveOllamaPath();
+    this.actionLog.append('ollama', `Starting Ollama: ${ollamaPath} serve`, 'extension');
+    if (shouldUseIntegratedTerminal()) {
+      const terminal = vscode.window.createTerminal({
+        name: 'aicode ollama',
+        cwd: this.resolveServerRoot(),
+        env: {
+          ...process.env,
+        },
+      });
+      this.ollamaTerminal = terminal;
+      this.startedOllamaByExtension = true;
+      this.lastOllamaExitDetail = 'Ollama running in integrated terminal.';
+      terminal.show(true);
+      terminal.sendText(`"${ollamaPath}" serve`, true);
+      return;
+    }
+
+    const child = spawn(ollamaPath, ['serve'], {
+      cwd: this.resolveServerRoot(),
+      env: {
+        ...process.env,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    child.stdout?.on('data', (chunk: Buffer | string) => {
+      this.rememberOutput('stdout', chunk);
+      this.output.append(String(chunk));
+    });
+    child.stderr?.on('data', (chunk: Buffer | string) => {
+      this.rememberOutput('stderr', chunk);
+      this.output.append(String(chunk));
+    });
+    child.on('error', (error) => {
+      this.lastOllamaExitDetail = `Spawn error: ${error.message}`;
+      this.actionLog.append('ollama', `Failed to start Ollama: ${error.message}`, 'extension');
+    });
+    child.on('exit', (code, signal) => {
+      this.ollamaChild = undefined;
+      const detail = `Ollama exited${code !== null ? ` with code ${code}` : ''}${signal ? ` (${signal})` : ''}`;
+      this.lastOllamaExitDetail = detail;
+      this.actionLog.append('ollama', detail, 'extension');
+      this.startedOllamaByExtension = false;
+    });
+
+    this.ollamaChild = child;
+    this.startedOllamaByExtension = true;
+    this.lastOllamaExitDetail = 'Ollama launch in progress.';
+  }
+
+  private async waitForOllamaReady(baseUrl: string, timeoutMs: number): Promise<OllamaHealth> {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const health = await checkOllamaHealth(baseUrl, 1000);
+      if (health.reachable) {
+        this.actionLog.append('ollama', `Ollama is ready at ${baseUrl}`, 'extension');
+        return health;
+      }
+      await sleep(500);
+    }
+    return await checkOllamaHealth(baseUrl, 1000);
+  }
+
   private async stopManagedProcess(): Promise<void> {
+    if (this.serverTerminal) {
+      this.serverTerminal.dispose();
+      this.serverTerminal = undefined;
+      this.child = undefined;
+      return;
+    }
     if (!this.child || this.child.exitCode !== null) {
       this.child = undefined;
       return;
@@ -636,6 +955,44 @@ class ServerManager implements vscode.Disposable {
     });
   }
 
+  async shutdownManagedServer(reason = 'Workspace closed'): Promise<void> {
+    if (this.isManagedServerRunning()) {
+      this.actionLog.append('server', `Stopping managed server: ${reason}`, 'extension');
+      await this.stopManagedProcess();
+      this.startedByExtension = false;
+      this.updateStatus('$(circle-large-outline) aicode', `Server stopped (${reason})`, false);
+    }
+    if (this.isManagedOllamaRunning()) {
+      this.actionLog.append('ollama', `Stopping managed Ollama: ${reason}`, 'extension');
+      await this.stopManagedOllamaProcess();
+      this.startedOllamaByExtension = false;
+    }
+  }
+
+  private async stopManagedOllamaProcess(): Promise<void> {
+    if (this.ollamaTerminal) {
+      this.ollamaTerminal.dispose();
+      this.ollamaTerminal = undefined;
+      this.ollamaChild = undefined;
+      return;
+    }
+    if (!this.ollamaChild || this.ollamaChild.exitCode !== null) {
+      this.ollamaChild = undefined;
+      return;
+    }
+
+    const child = this.ollamaChild;
+    await new Promise<void>((resolve) => {
+      const timeout = setTimeout(resolve, 3000);
+      child.once('exit', () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+      child.kill();
+    });
+    this.ollamaChild = undefined;
+  }
+
   private async waitForHealthy(): Promise<HealthResponse> {
     const startedAt = Date.now();
     while (Date.now() - startedAt < 30000) {
@@ -643,7 +1000,10 @@ class ServerManager implements vscode.Disposable {
       if (health) {
         return health;
       }
-      await sleep(750);
+      if (!this.autoStartEnabled()) {
+        throw new Error(await this.buildDiagnosticsMessage('Auto-start disabled while waiting for server readiness.'));
+      }
+      await sleep(500);
     }
     throw new Error(await this.buildDiagnosticsMessage(`Timed out waiting for aicode server at ${this.baseUrl()}.`));
   }
@@ -652,8 +1012,19 @@ class ServerManager implements vscode.Disposable {
     clearInterval(this.healthTimer);
     this.statusBar.dispose();
     this.emitter.dispose();
+    if (this.serverTerminal) {
+      this.serverTerminal.dispose();
+      this.serverTerminal = undefined;
+    }
     if (this.startedByExtension && this.child && this.child.exitCode === null) {
       this.child.kill();
+    }
+    if (this.ollamaTerminal) {
+      this.ollamaTerminal.dispose();
+      this.ollamaTerminal = undefined;
+    }
+    if (this.startedOllamaByExtension && this.ollamaChild && this.ollamaChild.exitCode === null) {
+      this.ollamaChild.kill();
     }
   }
 }
@@ -739,37 +1110,76 @@ function panelHtml(): string {
       color: var(--vscode-foreground);
       background: var(--vscode-editor-background);
     }
-    h3 { margin-bottom: 6px; }
+    h3 { margin-bottom: 10px; }
     .meta {
       display: flex;
       gap: 8px;
       align-items: center;
-      margin-bottom: 12px;
+      margin-bottom: 10px;
       opacity: 0.9;
       font-size: 12px;
+      flex-wrap: wrap;
     }
     .status {
       padding: 4px 8px;
       border-radius: 999px;
       border: 1px solid var(--vscode-panel-border);
     }
-    .layout {
-      display: grid;
-      grid-template-columns: 2fr 1fr;
-      gap: 12px;
+    .status.ok {
+      border-color: var(--vscode-testing-iconPassed);
+      color: var(--vscode-testing-iconPassed);
+    }
+    .status.warn {
+      border-color: var(--vscode-testing-iconFailed);
+      color: var(--vscode-testing-iconFailed);
     }
     .panel {
       border: 1px solid var(--vscode-panel-border);
       border-radius: 8px;
       padding: 10px;
-      min-height: 220px;
+      margin-bottom: 10px;
+    }
+    .panel-title {
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .runtime-details {
+      margin-bottom: 10px;
+    }
+    .runtime-details > summary,
+    details > summary {
+      cursor: pointer;
+      font-weight: 600;
+    }
+    #serverStatus {
+      margin-top: 8px;
+      margin-bottom: 6px;
+      white-space: pre-wrap;
+      font-size: 12px;
+      opacity: 0.9;
+    }
+    #buildStatus {
+      margin-bottom: 8px;
+      white-space: pre-wrap;
+      font-size: 12px;
+      opacity: 0.9;
+    }
+    .task-shell {
+      min-height: 140px;
+    }
+    .task-empty {
+      border: 1px dashed var(--vscode-panel-border);
+      border-radius: 8px;
+      padding: 12px;
+      opacity: 0.8;
+      font-size: 12px;
     }
     #history {
-      max-height: 48vh;
+      max-height: 40vh;
       overflow: auto;
     }
     #actionLog {
-      max-height: 48vh;
+      max-height: 160px;
       overflow: auto;
       font-size: 12px;
     }
@@ -778,6 +1188,7 @@ function panelHtml(): string {
       border-radius: 6px;
       padding: 8px;
       margin-bottom: 8px;
+      background: var(--vscode-editor-background);
     }
     .prompt { font-weight: 600; margin-bottom: 6px; white-space: pre-wrap; }
     .reply { white-space: pre-wrap; margin-bottom: 8px; }
@@ -810,48 +1221,107 @@ function panelHtml(): string {
       opacity: 0.7;
       margin-right: 6px;
     }
-    @media (max-width: 860px) {
-      .layout {
-        grid-template-columns: 1fr;
-      }
-    }
   </style>
 </head>
 <body>
   <h3>aicode Chat Panel</h3>
   <div class="meta">
-    <span id="serverStatus" class="status">Server status unknown</span>
-    <span>Managed local server, chat, editor actions, and action log.</span>
+    <span id="runtimePill" class="status warn">Runtime: attention needed</span>
+    <span>Task-first view: compose, track current task, then review history.</span>
   </div>
-  <div class="layout">
-    <div class="panel">
-      <strong>Chat</strong>
-      <div id="history"></div>
-      <div class="row">
-        <input id="prompt" placeholder="e.g. status or please help build itself in 3 cycles" />
-        <button id="send">Send</button>
-      </div>
-      <div class="row">
-        <button id="health">Check API</button>
-        <button id="restart">Restart Server</button>
-        <button id="editFile">Edit File</button>
-        <button id="editSelection">Edit Selection</button>
-        <button id="inlineChat">Inline Chat</button>
-      </div>
-      <div id="recent"></div>
+  <details class="runtime-details">
+    <summary>Runtime details</summary>
+    <div id="serverStatus">Server status unknown</div>
+    <div id="buildStatus">Extension build unknown</div>
+    <div class="row">
+      <button id="health">Check API</button>
+      <button id="restart">Restart Server</button>
     </div>
-    <div class="panel">
-      <strong>Action Log</strong>
-      <div id="actionLog"></div>
+  </details>
+
+  <div class="panel">
+    <div class="panel-title">Composer</div>
+    <div class="row">
+      <input id="prompt" placeholder="Ask for status, repo summary, or a code change" />
+      <button id="send">Send</button>
     </div>
+    <div class="row">
+      <button id="editFile">Edit File</button>
+      <button id="editSelection">Edit Selection</button>
+      <button id="inlineChat">Inline Chat</button>
+    </div>
+    <div id="recent"></div>
   </div>
 
+  <div class="panel task-shell">
+    <div class="panel-title">Current Task</div>
+    <div id="currentTask" class="task-empty">No active task yet. Send a command to start one.</div>
+    <details>
+      <summary>Diagnostics</summary>
+      <div id="actionLog"></div>
+    </details>
+  </div>
+
+  <details class="panel" open>
+    <summary>History</summary>
+    <div id="history"></div>
+  </details>
+
   <script>
-    const vscode = acquireVsCodeApi();
-    const history = document.getElementById('history');
+    const __aicodeBoot = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : undefined;
+    let __aicodeStarted = false;
+
+    function postBootMessage(type, extra) {
+      try {
+        if (__aicodeBoot) {
+          __aicodeBoot.postMessage({ type, ...(extra || {}) });
+        }
+      } catch {
+        // Ignore bootstrap reporting failures.
+      }
+    }
+
+    function reportClientError(error) {
+      const message = error && error.stack ? String(error.stack) : String(error && error.message ? error.message : error);
+      const status = document.getElementById('serverStatus');
+      if (status) {
+        status.textContent = 'Webview error: ' + message;
+      }
+      postBootMessage('clientError', { message });
+    }
+
+    window.addEventListener('error', (event) => {
+      reportClientError(event.error || event.message || 'Unknown webview error');
+    });
+
+    window.addEventListener('unhandledrejection', (event) => {
+      reportClientError(event.reason || 'Unhandled promise rejection');
+    });
+
+    const __bootStatus = document.getElementById('serverStatus');
+    if (__bootStatus) {
+      __bootStatus.textContent = 'Initializing panel...';
+    }
+    const __bootBuildStatus = document.getElementById('buildStatus');
+    if (__bootBuildStatus) {
+      __bootBuildStatus.textContent = 'Loading extension build metadata...';
+    }
+    postBootMessage('boot');
+
+    function startPanel() {
+    if (__aicodeStarted) {
+      return;
+    }
+    __aicodeStarted = true;
+    try {
+    // Reuse the already-acquired API instance — acquireVsCodeApi() can only be called once.
+    const vscode = __aicodeBoot;
+    const currentTask = document.getElementById('currentTask');
+    const historyList = document.getElementById('history');
     const recent = document.getElementById('recent');
     const actionLog = document.getElementById('actionLog');
     const input = document.getElementById('prompt');
+    const runtimePill = document.getElementById('runtimePill');
     const send = document.getElementById('send');
     const health = document.getElementById('health');
     const restart = document.getElementById('restart');
@@ -859,9 +1329,46 @@ function panelHtml(): string {
     const editSelection = document.getElementById('editSelection');
     const inlineChat = document.getElementById('inlineChat');
     const serverStatus = document.getElementById('serverStatus');
+    const buildStatus = document.getElementById('buildStatus');
     const state = vscode.getState() || { commands: [] };
     let commandHistory = Array.isArray(state.commands) ? state.commands : [];
     const activeEntries = new Map();
+    let currentTaskId = null;
+
+    function shouldOfferApply(action, command, response) {
+      const lowerAction = String(action || '').toLowerCase();
+      const lowerCommand = String(command || '').toLowerCase();
+      const lowerResponse = String(response || '').toLowerCase();
+      if (['edit', 'autofix', 'self_improve_apply'].includes(lowerAction)) {
+        return true;
+      }
+      return ['edit', 'fix', 'rewrite', 'refactor', 'apply patch', 'change'].some((token) => lowerCommand.includes(token))
+        || ['patch', 'diff', 'applied changes', 'edit preview'].some((token) => lowerResponse.includes(token));
+    }
+
+    function inferNextStep(action, response, explicitNextStep) {
+      const explicit = String(explicitNextStep || '').trim();
+      if (explicit) {
+        return explicit;
+      }
+      const text = String(response || '');
+      const lower = text.toLowerCase();
+      const marker = 'if you want, i can';
+      const index = lower.indexOf(marker);
+      if (index >= 0) {
+        const candidate = text.slice(index).split('\n')[0].trim();
+        if (candidate) {
+          return candidate;
+        }
+      }
+      const fallback = {
+        status: 'If you want, I can run full status validation next.',
+        repo_summary: 'If you want, I can drill into architecture, tests, or risks next.',
+        help_summary: 'If you want, I can implement one concrete improvement next.',
+        research: 'If you want, I can patch one likely file from this research next.',
+      };
+      return fallback[String(action || '').toLowerCase()] || 'If you want, I can clarify and take the next step.';
+    }
 
     function rememberCommand(command) {
       const next = [command, ...commandHistory.filter((item) => item !== command)];
@@ -913,17 +1420,79 @@ function panelHtml(): string {
       }
     }
 
-    function setServerStatus(status) {
+    function formatBuildLine(build) {
+      if (!build) {
+        return 'Loaded extension build: unavailable';
+      }
+      return 'Loaded extension: v'
+        + String(build.version || 'unknown')
+        + ' [' + String(build.runtime_mode || 'unknown') + '] '
+        + String(build.git_commit || 'unknown').slice(0, 12)
+        + ' built ' + String(build.built_at || 'unknown');
+    }
+
+    function formatServerRuntime(runtime) {
+      if (!runtime) {
+        return '';
+      }
+      return 'Server runtime: v'
+        + String(runtime.app_version || 'unknown')
+        + ' / routing ' + String(runtime.routing_generation || 'unknown')
+        + ' / commit ' + String(runtime.git_commit || 'unknown');
+    }
+
+    function formatBuildDetails(status) {
+      if (!status) {
+        return 'Extension build details unavailable.';
+      }
+      const lines = [formatBuildLine(status.extensionBuild)];
+      const runtimeLine = formatServerRuntime(status.serverRuntime);
+      if (runtimeLine) {
+        lines.push(runtimeLine);
+      }
+      if (status.workspaceBuildComparison && status.workspaceBuildComparison.detail) {
+        lines.push(status.workspaceBuildComparison.detail);
+      }
+      if (status.integrityIssue) {
+        lines.push('Extension integrity: ' + status.integrityIssue);
+      }
+      return lines.join('\\n');
+    }
+
+    function setServerStatus(status, runtimeLabel) {
       if (!status) {
         return;
       }
-      serverStatus.textContent = status.detail || status.text || 'Server status unknown';
+      const statusText = status.detail || status.text || 'Server status unknown';
+      if (serverStatus) {
+        serverStatus.textContent = statusText;
+      }
+      if (buildStatus) {
+        buildStatus.textContent = formatBuildDetails(status);
+      }
+      if (runtimePill) {
+        runtimePill.textContent = runtimeLabel || (status.healthy ? 'Runtime: healthy' : 'Runtime: attention needed');
+        runtimePill.classList.toggle('ok', Boolean(status.healthy));
+        runtimePill.classList.toggle('warn', !status.healthy);
+      }
+    }
+
+    function moveCurrentToHistory() {
+      if (!currentTaskId || !activeEntries.has(currentTaskId)) {
+        return;
+      }
+      const previous = activeEntries.get(currentTaskId);
+      if (previous && previous.card && historyList) {
+        historyList.prepend(previous.card);
+      }
     }
 
     function ensureEntry(id, command) {
       if (activeEntries.has(id)) {
         return activeEntries.get(id);
       }
+
+      moveCurrentToHistory();
 
       const card = document.createElement('div');
       card.className = 'entry';
@@ -941,20 +1510,44 @@ function panelHtml(): string {
 
       const actions = document.createElement('div');
       actions.className = 'entry-actions';
+
       const retry = document.createElement('button');
       retry.textContent = 'Retry';
       retry.addEventListener('click', () => submit(command));
       actions.appendChild(retry);
 
+      const clarify = document.createElement('button');
+      clarify.textContent = 'Clarify';
+      clarify.addEventListener('click', () => submit('clarify this request: ' + command));
+      actions.appendChild(clarify);
+
+      const apply = document.createElement('button');
+      apply.textContent = 'Apply suggested edit';
+      apply.style.display = 'none';
+      apply.addEventListener('click', () => vscode.postMessage({ type: 'editCurrentFile' }));
+      actions.appendChild(apply);
+
       card.appendChild(prompt);
       card.appendChild(meta);
       card.appendChild(reply);
       card.appendChild(actions);
-      history.appendChild(card);
-      history.scrollTop = history.scrollHeight;
-      const entry = { card, meta, reply };
+
+      currentTask.innerHTML = '';
+      currentTask.className = '';
+      currentTask.appendChild(card);
+
+      const entry = { card, meta, reply, apply };
       activeEntries.set(id, entry);
+      currentTaskId = id;
       return entry;
+    }
+
+    function finalizeEntry(id, command, action, confidence, response, nextStep) {
+      const entry = ensureEntry(id, command);
+      entry.meta.textContent = '[action=' + String(action || 'unknown') + ', confidence=' + Number(confidence || 0) + ']';
+      const suggestion = inferNextStep(action, response, nextStep);
+      entry.reply.textContent = String(response || '(no response)') + '\n\nNext: ' + suggestion;
+      entry.apply.style.display = shouldOfferApply(action, command, response) ? 'inline-block' : 'none';
     }
 
     function appendEntry(command, body) {
@@ -971,13 +1564,14 @@ function panelHtml(): string {
     function setEntryBody(id, command, body) {
       const entry = ensureEntry(id, command);
       entry.reply.textContent = body;
-      history.scrollTop = history.scrollHeight;
+      if (historyList) {
+        historyList.scrollTop = historyList.scrollHeight;
+      }
     }
 
     function appendToEntry(id, command, chunk) {
       const entry = ensureEntry(id, command);
       entry.reply.textContent += chunk;
-      history.scrollTop = history.scrollHeight;
     }
 
     function submit(commandOverride) {
@@ -1010,15 +1604,29 @@ function panelHtml(): string {
       const msg = event.data;
       if (msg.type === 'init') {
         renderActionLog(msg.entries || []);
-        setServerStatus(msg.status);
+        setServerStatus(msg.status, msg.runtimeLabel);
       }
       if (msg.type === 'result') {
-        appendEntry(msg.command || 'unknown', '[action=' + msg.action + ', confidence=' + msg.confidence + ']\\n' + msg.response);
+        const requestId = msg.requestId || ('req-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7));
+        finalizeEntry(
+          requestId,
+          msg.command || 'unknown',
+          msg.action,
+          msg.confidence,
+          msg.response,
+          msg.next_step,
+        );
       }
       if (msg.type === 'error') {
         if (msg.requestId) {
-          setEntryMeta(msg.requestId, msg.command || 'unknown', 'Request failed');
-          setEntryBody(msg.requestId, msg.command || 'unknown', 'ERROR: ' + msg.message);
+          finalizeEntry(
+            msg.requestId,
+            msg.command || 'unknown',
+            'error',
+            0,
+            'ERROR: ' + msg.message,
+            'If you want, I can retry or clarify this request next.',
+          );
         } else {
           appendEntry(msg.command || 'unknown', 'ERROR: ' + msg.message);
         }
@@ -1041,25 +1649,36 @@ function panelHtml(): string {
         appendToEntry(msg.requestId, msg.command || 'unknown', msg.chunk || '');
       }
       if (msg.type === 'streamDone') {
-        setEntryMeta(
+        finalizeEntry(
           msg.requestId,
           msg.command || 'unknown',
-          '[action=' + msg.action + ', confidence=' + msg.confidence + ']',
+          msg.action,
+          msg.confidence,
+          msg.response,
+          msg.next_step,
         );
-        if (!msg.response) {
-          setEntryBody(msg.requestId, msg.command || 'unknown', '(no response)');
-        }
       }
       if (msg.type === 'actionLog') {
         renderActionLog(msg.entries || []);
       }
       if (msg.type === 'serverStatus') {
-        setServerStatus(msg.status);
+        setServerStatus(msg.status, msg.runtimeLabel);
       }
     });
 
     renderRecent();
-    vscode.postMessage({ type: 'ready' });
+    setTimeout(() => vscode.postMessage({ type: 'ready' }), 0);
+    } catch (error) {
+      reportClientError(error);
+    }
+    }
+
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+      startPanel();
+    } else {
+      window.addEventListener('DOMContentLoaded', startPanel, { once: true });
+      window.addEventListener('load', startPanel, { once: true });
+    }
   </script>
 </body>
 </html>`;
@@ -1068,20 +1687,84 @@ function panelHtml(): string {
 export function activate(context: vscode.ExtensionContext) {
   const output = vscode.window.createOutputChannel('aicode');
   const actionLog = new ActionLogStore(output);
-  const serverManager = new ServerManager(context, output, actionLog);
+  const sidebarQuickActions = new SidebarQuickActionsProvider();
+  const buildInspector = new BuildRuntimeInspector(context);
+  const serverManager = new ServerManager(context, output, actionLog, buildInspector);
   const commentController = vscode.comments.createCommentController('aicode-inline', 'aicode Inline');
   const inlineSuggestions = new Map<string, InlineSuggestion>();
+  activeServerManager = serverManager;
+  const initialBuildSnapshot = buildInspector.snapshot();
+  actionLog.append('build', formatExtensionBuildSummary(initialBuildSnapshot.extensionBuild), 'extension');
+  if (initialBuildSnapshot.workspaceBuildComparison?.detail) {
+    actionLog.append('build', initialBuildSnapshot.workspaceBuildComparison.detail, 'extension');
+  }
+  if (initialBuildSnapshot.integrityIssue) {
+    actionLog.append('build', initialBuildSnapshot.integrityIssue, 'extension');
+  }
 
   let panel: vscode.WebviewPanel | undefined;
+  let panelReady = false;
+  const pendingPanelMessages: unknown[] = [];
+  const sidebarView = vscode.window.createTreeView('aicodeSidebarView', {
+    treeDataProvider: sidebarQuickActions,
+    showCollapseAll: false,
+  });
+
+  const panelDebug = (message: string): void => {
+    output.appendLine(`[panel] ${message}`);
+  };
 
   const postPanelMessage = (message: unknown): void => {
-    if (panel) {
+    if (!panel) {
+      return;
+    }
+    const messageType =
+      typeof message === 'object' && message !== null && 'type' in (message as Record<string, unknown>)
+        ? String((message as { type?: unknown }).type ?? 'unknown')
+        : 'unknown';
+    if (!panelReady) {
+      panelDebug(`Queue panel message: ${messageType}`);
+      pendingPanelMessages.push(message);
+      return;
+    }
+    panelDebug(`Post panel message: ${messageType}`);
+    void panel.webview.postMessage(message);
+  };
+
+  const flushPanelMessages = (): void => {
+    if (!panel || !panelReady || !pendingPanelMessages.length) {
+      return;
+    }
+    panelDebug(`Flush panel messages: ${pendingPanelMessages.length}`);
+    const queued = pendingPanelMessages.splice(0, pendingPanelMessages.length);
+    for (const message of queued) {
       void panel.webview.postMessage(message);
     }
   };
 
-  const syncPanelState = (): void => {
-    postPanelMessage({ type: 'init', entries: actionLog.getEntries(), status: serverManager.getStatus() });
+  const syncPanelState = async (): Promise<void> => {
+    panelDebug('Sync panel state');
+    const entries = actionLog.getEntries();
+    const cachedStatus = serverManager.getStatus();
+    postPanelMessage({
+      type: 'init',
+      entries,
+      status: cachedStatus,
+      runtimeLabel: formatRuntimeStatusLabel(cachedStatus),
+    });
+
+    try {
+      await serverManager.ensureModelReady();
+    } catch {
+      await serverManager.refreshHealth(false);
+    }
+
+    const freshStatus = serverManager.getStatus();
+    postPanelMessage({
+      type: 'serverStatus',
+      status: freshStatus,
+      runtimeLabel: formatRuntimeStatusLabel(freshStatus),
+    });
   };
 
   const logServerEvents = (events: ActionEvent[] | undefined): void => {
@@ -1089,16 +1772,21 @@ export function activate(context: vscode.ExtensionContext) {
   };
 
   const formatHealthSummary = (health: HealthResponse): string => {
-    const ollama = normalizeOllamaHealth(health, health.base_url);
     const runtimeMismatch = runtimeMismatchForHealth(serverManager.serverRoot(), health);
-    const ollamaSummary = ollama.reachable
-      ? `Ollama ready at ${health.base_url}`
-      : `Ollama unavailable at ${health.base_url}: ${ollama.detail} ${buildOllamaGuidance(health.base_url)}`;
-    const runtimeSummary = health.runtime
-      ? ` Runtime: v${health.runtime.app_version} / routing ${health.runtime.routing_generation}.`
-      : '';
-    const mismatchSummary = runtimeMismatch ? ` ${runtimeMismatch}` : '';
-    return `Server ready at ${normalizeBaseUrl()} (${health.model}). ${ollamaSummary}${runtimeSummary}${mismatchSummary}`;
+    const buildSnapshot = buildInspector.snapshot();
+    const lines = [formatHealthSummaryMessage(health, normalizeBaseUrl(), runtimeMismatch)];
+    lines.push(formatExtensionBuildSummary(buildSnapshot.extensionBuild));
+    const serverRuntime = formatServerRuntimeSummary(health.runtime);
+    if (serverRuntime) {
+      lines.push(serverRuntime);
+    }
+    if (buildSnapshot.workspaceBuildComparison?.detail) {
+      lines.push(buildSnapshot.workspaceBuildComparison.detail);
+    }
+    if (buildSnapshot.integrityIssue) {
+      lines.push(`Extension integrity: ${buildSnapshot.integrityIssue}`);
+    }
+    return lines.join('\n');
   };
 
   const callAppCommand = async (command: string): Promise<AppCommandResponse> => {
@@ -1149,6 +1837,7 @@ export function activate(context: vscode.ExtensionContext) {
           action: fallback.action,
           confidence: fallback.confidence,
           response: fallback.response,
+          next_step: fallback.next_step,
         });
         return fallback;
       }
@@ -1169,6 +1858,7 @@ export function activate(context: vscode.ExtensionContext) {
         action: fallback.action,
         confidence: fallback.confidence,
         response: fallback.response,
+        next_step: fallback.next_step,
       });
       return fallback;
     }
@@ -1179,6 +1869,7 @@ export function activate(context: vscode.ExtensionContext) {
     let streamedResponse = '';
     let finalAction = 'unknown';
     let finalConfidence = 0;
+    let finalNextStep = '';
 
     const handleEvent = (entry: StreamEvent): void => {
       const payload = entry.data;
@@ -1221,6 +1912,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
         finalAction = String(payload.action ?? finalAction);
         finalConfidence = Number(payload.confidence ?? finalConfidence);
+        finalNextStep = String(payload.next_step ?? finalNextStep);
         callbacks.onDone?.(payload);
         return;
       }
@@ -1255,6 +1947,7 @@ export function activate(context: vscode.ExtensionContext) {
       action: finalAction,
       confidence: finalConfidence,
       response: streamedResponse,
+      next_step: finalNextStep,
     };
   };
 
@@ -1394,7 +2087,11 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
   serverManager.onDidChangeStatus((status) => {
-    postPanelMessage({ type: 'serverStatus', status });
+    postPanelMessage({
+      type: 'serverStatus',
+      status,
+      runtimeLabel: formatRuntimeStatusLabel(status),
+    });
   });
 
   const askDisposable = vscode.commands.registerCommand('aicode.ask', async () => {
@@ -1611,17 +2308,20 @@ export function activate(context: vscode.ExtensionContext) {
   const panelDisposable = vscode.commands.registerCommand('aicode.openPanel', async () => {
     if (panel) {
       panel.reveal(vscode.ViewColumn.Beside);
-      syncPanelState();
+      void syncPanelState();
       return;
     }
 
     panel = vscode.window.createWebviewPanel('aicodeChatPanel', 'aicode Chat', vscode.ViewColumn.Beside, {
       enableScripts: true,
     });
-    panel.webview.html = panelHtml();
+    panelReady = false;
+    pendingPanelMessages.length = 0;
 
     panel.onDidDispose(() => {
       panel = undefined;
+      panelReady = false;
+      pendingPanelMessages.length = 0;
     });
 
     panel.webview.onDidReceiveMessage(async (message: unknown) => {
@@ -1629,9 +2329,27 @@ export function activate(context: vscode.ExtensionContext) {
         typeof message === 'object' && message !== null
           ? (message as { type?: string; command?: unknown })
           : {};
+      panelDebug(`Panel -> extension: ${String(payload.type ?? 'unknown')}`);
+
+      if (!panelReady) {
+        panelReady = true;
+        flushPanelMessages();
+      }
 
       if (payload.type === 'ready') {
-        syncPanelState();
+        void syncPanelState();
+        return;
+      }
+
+      if (payload.type === 'boot') {
+        panelDebug('Panel boot message received');
+        return;
+      }
+
+      if (payload.type === 'clientError') {
+        const text = String((payload as { message?: unknown }).message ?? 'Unknown webview error');
+        panelDebug(`Client error: ${text}`);
+        actionLog.append('error', `Webview client error: ${text}`, 'extension');
         return;
       }
 
@@ -1716,6 +2434,7 @@ export function activate(context: vscode.ExtensionContext) {
               action: String(entry.action ?? 'unknown'),
               confidence: Number(entry.confidence ?? 0),
               response: String(entry.response ?? ''),
+              next_step: String(entry.next_step ?? ''),
             });
           },
         });
@@ -1725,7 +2444,9 @@ export function activate(context: vscode.ExtensionContext) {
       }
     });
 
-    syncPanelState();
+    panel.webview.html = panelHtml();
+
+    void syncPanelState();
   });
 
   context.subscriptions.push(
@@ -1738,18 +2459,47 @@ export function activate(context: vscode.ExtensionContext) {
     editSelectionDisposable,
     inlineChatDisposable,
     panelDisposable,
+    sidebarView,
     output,
     actionLog,
     serverManager,
     commentController,
+    vscode.window.onDidCloseTerminal((terminal) => {
+      serverManager.handleTerminalClosed(terminal);
+    }),
+    vscode.workspace.onDidChangeWorkspaceFolders((event) => {
+      if (!shouldStopManagedServerOnDeactivate()) {
+        return;
+      }
+      const noWorkspaceOpen = (vscode.workspace.workspaceFolders ?? []).length === 0;
+      if (!noWorkspaceOpen) {
+        return;
+      }
+      void serverManager.shutdownManagedServer('All workspace folders closed');
+    }),
   );
 
   if (serverManager.autoStartEnabled()) {
-    void serverManager.ensureRunning().catch((error) => {
+    void serverManager.ensureModelReady().catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
       actionLog.append('health', `Auto-start failed: ${message}`, 'extension');
     });
   }
 }
 
-export function deactivate() {}
+let activeServerManager: ServerManager | undefined;
+
+export async function deactivate(): Promise<void> {
+  const manager = activeServerManager;
+  activeServerManager = undefined;
+  if (!manager) {
+    return;
+  }
+  try {
+    if (shouldStopManagedServerOnDeactivate()) {
+      await manager.shutdownManagedServer('Extension deactivated');
+    }
+  } finally {
+    manager.dispose();
+  }
+}

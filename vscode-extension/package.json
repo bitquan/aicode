@@ -2,7 +2,7 @@
   "name": "aicode-thin-client",
   "displayName": "aicode Local Agent",
   "description": "VS Code client with managed local server, editor chat, and diff preview for aicode",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "publisher": "aicode-local",
   "license": "MIT",
   "engines": {
@@ -16,6 +16,29 @@
     "onStartupFinished"
   ],
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "aicode-sidebar",
+          "title": "aicode",
+          "icon": "media/aicode.svg"
+        }
+      ]
+    },
+    "views": {
+      "aicode-sidebar": [
+        {
+          "id": "aicodeSidebarView",
+          "name": "Quick Actions"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "aicodeSidebarView",
+        "contents": "Use **Open Chat Panel** to work in the full UX, or run quick actions from this sidebar."
+      }
+    ],
     "commands": [
       {
         "command": "aicode.ask",
@@ -91,7 +114,27 @@
         "aicode.autoStartServer": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically start and health-check the local aicode server when the extension activates."
+          "description": "Automatically start and health-check the local aicode server when VS Code activates the extension for this workspace."
+        },
+        "aicode.autoStartOllama": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically start Ollama with 'ollama serve' when the extension needs model access and Ollama is not reachable."
+        },
+        "aicode.ollamaPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional absolute path (or workspace-relative path) to the Ollama executable. Defaults to /opt/homebrew/bin/ollama on macOS, otherwise 'ollama' from PATH."
+        },
+        "aicode.showManagedProcessesInTerminal": {
+          "type": "boolean",
+          "default": true,
+          "description": "Launch extension-managed aicode server and Ollama inside named VS Code terminals so live logs stay visible."
+        },
+        "aicode.stopServerOnDeactivate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Stop extension-managed local aicode server when the workspace closes or the extension deactivates."
         },
         "aicode.serverRoot": {
           "type": "string",
@@ -113,9 +156,13 @@
   },
   "scripts": {
     "compile": "tsc -p ./",
+    "compile:clean": "node scripts/compile_clean.js",
     "watch": "tsc -watch -p ./",
-    "test:smoke": "npm run compile && node --test smoke/**/*.test.cjs",
-    "package:vsix": "mkdir -p dist && npx @vscode/vsce package --allow-missing-repository --out dist/aicode-local-agent-0.1.4.vsix"
+    "test:smoke": "npm run compile:clean && node --test smoke/**/*.test.cjs",
+    "verify:vsix": "node scripts/verify_vsix.js",
+    "package:release": "node scripts/package_release.js",
+    "package:vsix": "npm run package:release",
+    "install:vsix": "node scripts/install_vsix.js"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
