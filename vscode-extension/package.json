@@ -2,7 +2,7 @@
   "name": "aicode-thin-client",
   "displayName": "aicode Local Agent",
   "description": "VS Code client with managed local server, editor chat, and diff preview for aicode",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "publisher": "aicode-local",
   "license": "MIT",
   "engines": {

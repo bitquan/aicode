@@ -1543,7 +1543,7 @@ function panelHtml(): string {
       const marker = 'if you want, i can';
       const index = lower.indexOf(marker);
       if (index >= 0) {
-        const candidate = text.slice(index).split('\n')[0].trim();
+        const candidate = text.slice(index).split('\\n')[0].trim();
         if (candidate) {
           return candidate;
         }
@@ -1733,7 +1733,7 @@ function panelHtml(): string {
       const entry = ensureEntry(id, command);
       entry.meta.textContent = '[action=' + String(action || 'unknown') + ', confidence=' + Number(confidence || 0) + ']';
       const suggestion = inferNextStep(action, response, nextStep);
-      entry.reply.textContent = String(response || '(no response)') + '\n\nNext: ' + suggestion;
+      entry.reply.textContent = String(response || '(no response)') + '\\n\\nNext: ' + suggestion;
       entry.apply.style.display = shouldOfferApply(action, command, response) ? 'inline-block' : 'none';
     }
 
