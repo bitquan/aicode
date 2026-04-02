@@ -17,3 +17,15 @@ def test_snapshot(tmp_path):
     snap = store.snapshot()
     assert snap['entries'] == 1
     assert 'generator' in snap['agents']
+
+
+def test_load_failure_logs_warning(tmp_path, caplog):
+    broken = tmp_path / ".knowledge_base" / "agent_memory.json"
+    broken.parent.mkdir(parents=True, exist_ok=True)
+    broken.write_text("{bad json")
+
+    with caplog.at_level("WARNING"):
+        store = AgentMemoryStore(str(tmp_path))
+
+    assert store.data == {"entries": []}
+    assert "event=agent_memory_load_failed" in caplog.text

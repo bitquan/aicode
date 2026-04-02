@@ -33,6 +33,53 @@ class TestCoverageAnalyzer:
     def __init__(self, workspace_root: str = "."):
         self.workspace_root = Path(workspace_root).resolve()
         self.analyses: Dict[str, CoverageAnalysis] = {}
+
+    @staticmethod
+    def _infer_example_value(param_name: str) -> str:
+        """Infer a safe default value for test inputs from parameter names."""
+        lower = param_name.lower()
+        if any(token in lower for token in ("count", "size", "length", "num", "index", "idx", "id", "age", "limit", "offset")):
+            return "1"
+        if any(token in lower for token in ("ratio", "rate", "pct", "percent", "score", "weight", "price", "amount", "total")):
+            return "1.0"
+        if any(token in lower for token in ("enabled", "active", "flag", "valid", "ok")):
+            return "True"
+        if any(token in lower for token in ("items", "values", "records", "rows", "list")):
+            return "[]"
+        if any(token in lower for token in ("config", "payload", "meta", "options", "kwargs", "mapping")):
+            return "{}"
+        if any(token in lower for token in ("name", "title", "path", "text", "query", "message", "key")):
+            return f'"sample_{param_name}"'
+        return "None"
+
+    @staticmethod
+    def _build_assertions(function_name: str, return_type: Optional[str]) -> List[str]:
+        """Build practical assertion lines from return type + function semantics."""
+        normalized_type = (return_type or "").strip()
+        if normalized_type.startswith("Optional[") and normalized_type.endswith("]"):
+            normalized_type = normalized_type[len("Optional["):-1].strip()
+
+        if normalized_type in ("bool", "Boolean"):
+            return ["assert isinstance(result, bool)"]
+        if normalized_type in ("int", "float"):
+            return [f"assert isinstance(result, {normalized_type})"]
+        if normalized_type == "str":
+            return ["assert isinstance(result, str)"]
+        if normalized_type in ("dict", "Dict", "Mapping"):
+            return ["assert isinstance(result, dict)"]
+        if normalized_type in ("list", "List", "Sequence", "tuple", "Tuple", "set", "Set"):
+            concrete = "list" if normalized_type.lower().startswith("list") else "tuple" if normalized_type.lower().startswith("tuple") else "set" if normalized_type.lower().startswith("set") else "list"
+            return [f"assert isinstance(result, {concrete})"]
+        if normalized_type in ("None", "NoneType"):
+            return ["assert result is None"]
+
+        lower_name = function_name.lower()
+        if lower_name.startswith(("is_", "has_", "can_", "should_")):
+            return ["assert isinstance(result, bool)"]
+        if lower_name.startswith(("get_", "find_", "fetch_", "load_", "build_", "create_", "parse_")):
+            return ["assert result is not None"]
+
+        return ["assert result is not None"]
     
     def analyze_file(self, filepath: str) -> Dict:
         """Analyze test coverage for a single file."""
@@ -213,23 +260,26 @@ class TestCoverageAnalyzer:
 '''
             
             for param in param_list:
-                test_code += f"    {param} = ???  # TODO: set test value\n"
+                example_value = self._infer_example_value(param)
+                test_code += f"    {param} = {example_value}\n"
+
+            call_args = ", ".join(param_list)
+            call_suffix = call_args if call_args else ""
+            assertion_lines = self._build_assertions(function_name, return_type)
+            assertion_block = "\n".join(f"    {line}" for line in assertion_lines)
             
             test_code += f'''
     # Act - execute the function
-    result = {Path(filepath).stem}.{function_name}({', '.join(param_list)})
+    result = {Path(filepath).stem}.{function_name}({call_suffix})
     
     # Assert - verify results
-    assert result is not None  # TODO: add real assertion
-    assert isinstance(result, {return_type or 'object'})  # TODO: verify type
+{assertion_block}
 '''
             
             if param_list:
                 test_code += f'''
     # Test edge cases
-    # TODO: test with empty/None values
-    # TODO: test with boundary values
-    # TODO: test error conditions
+    # Consider adding case(s): empty inputs, boundary values, and invalid inputs
 '''
             
             return {
@@ -312,7 +362,7 @@ def {result['test_name']}():
 
 {result['test_code']}
 
-💡 Replace ??? with actual test values and assertions"""
+💡 Review and refine these baseline assertions for domain-specific behavior"""
     
     if "total_functions" in result:
         # Missing tests suggestions

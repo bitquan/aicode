@@ -137,3 +137,27 @@ def test_chat_engine_logs_interactions(mock_status, mock_index, mock_agent):
     assert engine.interaction_log[0]["action"] == "generate"
     assert engine.interaction_log[0]["success"] is True
     assert "write code" in engine.interaction_log[0]["query"]
+
+
+def test_doc_fetcher_load_cache_failure_logs_warning(tmp_path, caplog):
+    fetcher = DocFetcher(str(tmp_path))
+    fetcher.cache_file.write_text("{bad json")
+
+    with caplog.at_level("WARNING"):
+        loaded = fetcher._load_cache()
+
+    assert loaded == {}
+    assert "event=doc_fetcher_load_cache_failed" in caplog.text
+
+
+def test_doc_fetcher_extract_requirements_failure_logs_warning(tmp_path, caplog):
+    fetcher = DocFetcher(str(tmp_path))
+    target = tmp_path / "pyproject.toml"
+    target.write_text("[tool.poetry]\nname='x'\n")
+
+    with patch("src.tools.doc_fetcher.Path.read_text", side_effect=RuntimeError("boom")):
+        with caplog.at_level("WARNING"):
+            packages = fetcher.extract_requirements(str(target))
+
+    assert packages == []
+    assert "event=doc_fetcher_extract_requirements_failed" in caplog.text

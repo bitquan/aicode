@@ -4,10 +4,14 @@ The chat system improves itself by analyzing patterns and building a custom know
 """
 
 import json
+import logging
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from collections import Counter
+
+
+logger = logging.getLogger(__name__)
 
 
 class SelfBuilder:
@@ -34,8 +38,12 @@ class SelfBuilder:
             if filepath.exists():
                 with open(filepath) as f:
                     return json.load(f)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "event=self_builder_load_json_failed filepath=%s error=%s",
+                filepath,
+                exc,
+            )
         return {}
     
     def _save_json(self, filepath: Path, data: Dict):
@@ -43,8 +51,12 @@ class SelfBuilder:
         try:
             with open(filepath, 'w') as f:
                 json.dump(data, f, indent=2)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "event=self_builder_save_json_failed filepath=%s error=%s",
+                filepath,
+                exc,
+            )
     
     def analyze_interactions(self, logs: List[Dict]) -> Dict:
         """Analyze interaction logs to extract patterns and insights."""

@@ -236,3 +236,25 @@ def test_code_template_building():
     
     assert "http_client" in templates
     assert "data_transform" in templates
+
+
+def test_self_builder_load_failure_logs_warning(tmp_path, caplog):
+    kb_dir = tmp_path / ".knowledge_base"
+    kb_dir.mkdir(parents=True, exist_ok=True)
+    (kb_dir / "patterns.json").write_text("{bad json")
+
+    with caplog.at_level("WARNING"):
+        builder = SelfBuilder(str(tmp_path))
+
+    assert isinstance(builder.patterns, dict)
+    assert "event=self_builder_load_json_failed" in caplog.text
+
+
+def test_self_builder_save_failure_logs_warning(tmp_path, caplog):
+    builder = SelfBuilder(str(tmp_path))
+
+    with patch("builtins.open", side_effect=OSError("permission denied")):
+        with caplog.at_level("WARNING"):
+            builder._save_json(builder.patterns_file, {"x": 1})
+
+    assert "event=self_builder_save_json_failed" in caplog.text

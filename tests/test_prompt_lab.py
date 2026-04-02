@@ -22,3 +22,15 @@ def test_recommend_strategy(tmp_path):
     recommendation = lab.recommend_strategy("test this")
     assert recommendation["strategy"] in {"chain_of_thought", "baseline"}
     assert "reason" in recommendation
+
+
+def test_prompt_lab_load_failure_logs_warning(tmp_path, caplog):
+    broken = tmp_path / ".knowledge_base" / "prompt_lab.json"
+    broken.parent.mkdir(parents=True, exist_ok=True)
+    broken.write_text("{bad json")
+
+    with caplog.at_level("WARNING"):
+        lab = PromptLab(str(tmp_path))
+
+    assert lab.summarize()["total_runs"] == 0
+    assert "event=prompt_lab_load_failed" in caplog.text

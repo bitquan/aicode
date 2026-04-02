@@ -5,6 +5,7 @@ Supports common frameworks/libraries used in Python projects.
 
 import json
 import hashlib
+import logging
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List
@@ -25,6 +26,9 @@ DOC_SOURCES = {
 }
 
 
+logger = logging.getLogger(__name__)
+
+
 class DocFetcher:
     """Fetch and cache online documentation."""
     
@@ -41,8 +45,12 @@ class DocFetcher:
             try:
                 with open(self.cache_file) as f:
                     return json.load(f)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "event=doc_fetcher_load_cache_failed cache_file=%s error=%s",
+                    self.cache_file,
+                    exc,
+                )
         return {}
     
     def _save_cache(self):
@@ -50,8 +58,12 @@ class DocFetcher:
         try:
             with open(self.cache_file, 'w') as f:
                 json.dump(self.doc_cache, f, indent=2)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "event=doc_fetcher_save_cache_failed cache_file=%s error=%s",
+                self.cache_file,
+                exc,
+            )
     
     def _is_cache_fresh(self, key: str) -> bool:
         """Check if cached entry is still fresh."""
@@ -168,8 +180,12 @@ class DocFetcher:
                         if pkg in DOC_SOURCES:
                             packages.append(pkg)
         
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "event=doc_fetcher_extract_requirements_failed filepath=%s error=%s",
+                filepath,
+                exc,
+            )
         
         return list(set(packages))
 

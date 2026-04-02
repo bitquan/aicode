@@ -1,8 +1,12 @@
 """Prompt Engineering Lab for tracking prompt outcomes and strategy quality."""
 
 import json
+import logging
 from pathlib import Path
 from typing import Dict, List
+
+
+logger = logging.getLogger(__name__)
 
 
 class PromptLab:
@@ -19,8 +23,12 @@ class PromptLab:
             try:
                 with open(self.store_path) as handle:
                     return json.load(handle)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "event=prompt_lab_load_failed store_path=%s error=%s",
+                    self.store_path,
+                    exc,
+                )
         return {"runs": []}
 
     def _save(self):

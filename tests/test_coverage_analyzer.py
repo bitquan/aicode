@@ -90,10 +90,30 @@ class Calculator:
         assert "test_code" in result
     
     def test_test_template_with_parameters(self, analyzer):
-        """Test template has parameter placeholders."""
+        """Test template contains concrete default values and no unresolved placeholders."""
         result = analyzer.generate_test_template("code.py", "multiply")
         assert "test_code" in result
-        assert "???" in result["test_code"]  # Placeholder for test values
+        assert "???" not in result["test_code"]
+        assert "# TODO" not in result["test_code"]
+
+    def test_template_with_typed_return_generates_type_assertion(self, tmp_path):
+        test_file = tmp_path / "typed.py"
+        test_file.write_text(
+            """
+def is_valid(flag: bool) -> bool:
+    return bool(flag)
+
+def total_count(items: list) -> int:
+    return len(items)
+""".strip()
+        )
+        analyzer = CoverageAnalyzerTool(str(tmp_path))
+
+        bool_result = analyzer.generate_test_template("typed.py", "is_valid")
+        int_result = analyzer.generate_test_template("typed.py", "total_count")
+
+        assert "assert isinstance(result, bool)" in bool_result["test_code"]
+        assert "assert isinstance(result, int)" in int_result["test_code"]
     
     def test_file_not_found(self, analyzer):
         """Test handling of missing file."""
@@ -165,7 +185,8 @@ class TestFormatCoverageOutput:
         output = format_coverage_output(result)
         assert "Test Template" in output
         assert "test_add" in output
-        assert "???" in output or "Parameters" in output
+        assert "Parameters" in output
+        assert "???" not in output
     
     def test_format_suggestions(self):
         """Test suggestions formatting."""
