@@ -95,6 +95,47 @@
       {
         "command": "aicode.applyInlineSuggestion",
         "title": "aicode: Apply Inline Suggestion"
+      },
+      {
+        "command": "aicode.fixProblems",
+        "title": "aicode: Fix Problems",
+        "icon": "$(wrench)"
+      },
+      {
+        "command": "aicode.fixAllProblems",
+        "title": "aicode: Fix All Workspace Problems"
+      },
+      {
+        "command": "aicode.explainSearchResults",
+        "title": "aicode: Explain Search Results"
+      },
+      {
+        "command": "aicode.captureTerminalCommand",
+        "title": "aicode: Browse Captured Commands"
+      },
+      {
+        "command": "aicode.explainTerminalCommand",
+        "title": "aicode: Explain / Fix Terminal Command"
+      },
+      {
+        "command": "aicode.reviewChanges",
+        "title": "aicode: Review SCM Changes",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "aicode.generateCommitMessage",
+        "title": "aicode: Generate Commit Message",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "aicode.explainDebugState",
+        "title": "aicode: Explain Debug State",
+        "icon": "$(bug)"
+      },
+      {
+        "command": "aicode.fixFailingTests",
+        "title": "aicode: Fix Failing Tests",
+        "icon": "$(beaker)"
       }
     ],
     "menus": {
@@ -120,6 +161,43 @@
           "command": "aicode.inlineChat",
           "when": "editorTextFocus",
           "group": "navigation@11"
+        }
+      ],
+      "problems/item/context": [
+        {
+          "command": "aicode.fixProblems",
+          "group": "navigation@1"
+        }
+      ],
+      "scm/title": [
+        {
+          "command": "aicode.generateCommitMessage",
+          "group": "navigation@1",
+          "when": "scmProvider == git"
+        },
+        {
+          "command": "aicode.reviewChanges",
+          "group": "navigation@2",
+          "when": "scmProvider == git"
+        }
+      ],
+      "scm/resourceState/context": [
+        {
+          "command": "aicode.reviewChanges",
+          "group": "navigation@1",
+          "when": "scmProvider == git"
+        }
+      ],
+      "debug/callstack/context": [
+        {
+          "command": "aicode.explainDebugState",
+          "group": "navigation@1"
+        }
+      ],
+      "testing/item/context": [
+        {
+          "command": "aicode.fixFailingTests",
+          "group": "navigation@1"
         }
       ]
     },

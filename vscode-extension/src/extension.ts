@@ -105,6 +105,64 @@ type InlineSuggestion = {
   prompt: string;
 };
 
+// ---------------------------------------------------------------------------
+// Terminal capture
+// ---------------------------------------------------------------------------
+
+type CapturedCommand = {
+  id: string;
+  command: string;
+  exitCode?: number;
+  cwd?: string;
+  timestamp: string;
+};
+
+const MAX_CAPTURED_COMMANDS = 30;
+const capturedTerminalCommands: CapturedCommand[] = [];
+
+function addCapturedCommand(cmd: Omit<CapturedCommand, 'id'>): void {
+  capturedTerminalCommands.unshift({ id: `cap-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, ...cmd });
+  if (capturedTerminalCommands.length > MAX_CAPTURED_COMMANDS) {
+    capturedTerminalCommands.length = MAX_CAPTURED_COMMANDS;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostics helper
+// ---------------------------------------------------------------------------
+
+function diagSeverityLabel(s: vscode.DiagnosticSeverity | undefined): string {
+  switch (s) {
+    case vscode.DiagnosticSeverity.Error: return 'error';
+    case vscode.DiagnosticSeverity.Warning: return 'warning';
+    case vscode.DiagnosticSeverity.Information: return 'info';
+    case vscode.DiagnosticSeverity.Hint: return 'hint';
+    default: return 'problem';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Git helper (vscode.git extension)
+// ---------------------------------------------------------------------------
+
+type GitApi = {
+  repositories: Array<{
+    inputBox: { value: string };
+    state: {
+      workingTreeChanges: Array<{ uri: vscode.Uri; status: number }>;
+      indexChanges: Array<{ uri: vscode.Uri; status: number }>;
+    };
+    diff(staged: boolean): Promise<string>;
+  }>;
+};
+
+async function getGitApi(): Promise<GitApi | undefined> {
+  const ext = vscode.extensions.getExtension<{ getAPI(v: number): GitApi }>('vscode.git');
+  if (!ext) return undefined;
+  if (!ext.isActive) await ext.activate();
+  return ext.exports.getAPI(1);
+}
+
 type ServerStatusSnapshot = {
   text: string;
   detail: string;
@@ -1854,6 +1912,14 @@ function panelHtml(): string {
       if (msg.type === 'serverStatus') {
         setServerStatus(msg.status, msg.runtimeLabel);
       }
+      if (msg.type === 'prefillPrompt') {
+        if (input && msg.prompt) {
+          input.value = String(msg.prompt);
+          input.focus();
+          // Scroll input into view
+          input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }
     });
 
     postBootMessage('boot');
@@ -1884,6 +1950,30 @@ export function activate(context: vscode.ExtensionContext) {
   const commentController = vscode.comments.createCommentController('aicode-inline', 'aicode Inline');
   const inlineSuggestions = new Map<string, InlineSuggestion>();
   activeServerManager = serverManager;
+
+  // ---------- Terminal command capture (VS Code 1.93+ shell integration) ----------
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const win = vscode.window as any;
+  if (typeof win.onDidEndTerminalShellExecution === 'function') {
+    context.subscriptions.push(
+      win.onDidEndTerminalShellExecution((e: {
+        terminal: vscode.Terminal;
+        shellIntegration: { cwd?: vscode.Uri };
+        execution: { commandLine: { value: string }; exitCode?: number };
+      }) => {
+        const cmd = e.execution?.commandLine?.value?.trim();
+        if (!cmd) return;
+        // Skip short/trivial commands and the aicode server itself
+        if (cmd.length < 3 || cmd.startsWith('cd ') || cmd === 'ls' || cmd === 'pwd') return;
+        addCapturedCommand({
+          command: cmd,
+          exitCode: e.execution.exitCode,
+          cwd: e.shellIntegration?.cwd?.fsPath,
+          timestamp: new Date().toISOString(),
+        });
+      }),
+    );
+  }
   const initialBuildSnapshot = buildInspector.snapshot();
   actionLog.append('build', formatExtensionBuildSummary(initialBuildSnapshot.extensionBuild), 'extension');
   if (initialBuildSnapshot.workspaceBuildComparison?.detail) {
@@ -2283,6 +2373,381 @@ export function activate(context: vscode.ExtensionContext) {
       status,
       runtimeLabel: formatRuntimeStatusLabel(status),
     });
+  });
+
+  // ---------- Failing test message store (populated by aicode.fixFailingTests task run) ----------
+  const lastFailedTestMessages: string[] = [];
+
+  // ---------- Helper: open panel and inject a pre-filled command ----------
+  const openPanelWithPrompt = async (prompt: string): Promise<void> => {
+    await vscode.commands.executeCommand('aicode.openPanel');
+    // Small delay to ensure panel is ready before posting
+    await new Promise((r) => setTimeout(r, 150));
+    postPanelMessage({ type: 'prefillPrompt', prompt });
+  };
+
+  // ===========================================================================
+  // Feature: Problems panel actions
+  // ===========================================================================
+
+  const fixProblemsDisposable = vscode.commands.registerCommand(
+    'aicode.fixProblems',
+    async (resourceOrUri?: vscode.Uri | { resourceUri?: vscode.Uri }) => {
+      // Accepts the Uri directly (problems/item/context passes the resource Uri as-is in some VS Code versions)
+      let uri: vscode.Uri | undefined;
+      if (resourceOrUri instanceof vscode.Uri) {
+        uri = resourceOrUri;
+      } else if (resourceOrUri && typeof resourceOrUri === 'object' && 'resourceUri' in resourceOrUri && resourceOrUri.resourceUri instanceof vscode.Uri) {
+        uri = resourceOrUri.resourceUri;
+      }
+      uri = uri ?? vscode.window.activeTextEditor?.document.uri;
+
+      if (!uri) {
+        vscode.window.showWarningMessage('aicode: Open a file or select one in the Problems panel.');
+        return;
+      }
+
+      const diags = vscode.languages.getDiagnostics(uri).filter(
+        (d) => d.severity === vscode.DiagnosticSeverity.Error || d.severity === vscode.DiagnosticSeverity.Warning,
+      );
+
+      if (!diags.length) {
+        vscode.window.showInformationMessage('aicode: No errors or warnings found in this file.');
+        return;
+      }
+
+      const rel = vscode.workspace.asRelativePath(uri);
+      const lines = diags.map(
+        (d) => `  Line ${d.range.start.line + 1}: [${diagSeverityLabel(d.severity)}] ${d.message}${d.source ? ` (${d.source})` : ''}`,
+      );
+      const prompt = `Fix these ${lines.length} problem${lines.length > 1 ? 's' : ''} in ${rel}:\n${lines.join('\n')}`;
+      await openPanelWithPrompt(prompt);
+    },
+  );
+
+  const fixAllProblemsDisposable = vscode.commands.registerCommand('aicode.fixAllProblems', async () => {
+    const all = vscode.languages.getDiagnostics();
+    const errors: string[] = [];
+    for (const [uri, diags] of all) {
+      const relevant = diags.filter(
+        (d) => d.severity === vscode.DiagnosticSeverity.Error,
+      );
+      if (!relevant.length) continue;
+      const rel = vscode.workspace.asRelativePath(uri);
+      for (const d of relevant) {
+        errors.push(`${rel}:${d.range.start.line + 1}: ${d.message}`);
+      }
+    }
+    if (!errors.length) {
+      vscode.window.showInformationMessage('aicode: No errors found across the workspace.');
+      return;
+    }
+    const summary = errors.slice(0, 40).join('\n');
+    const extra = errors.length > 40 ? `\n…and ${errors.length - 40} more errors.` : '';
+    await openPanelWithPrompt(`Fix these workspace errors:\n${summary}${extra}`);
+  });
+
+  // ===========================================================================
+  // Feature: Search panel integration
+  // ===========================================================================
+
+  const explainSearchResultsDisposable = vscode.commands.registerCommand('aicode.explainSearchResults', async () => {
+    const query = await vscode.window.showInputBox({
+      prompt: 'What did you search for? (aicode will explain results and suggest next steps)',
+      placeHolder: 'e.g. handleAuth OR paste a symbol/pattern you searched for',
+      value: vscode.window.activeTextEditor?.document.getText(vscode.window.activeTextEditor.selection) || '',
+      ignoreFocusOut: true,
+    });
+    if (!query) return;
+
+    const files = await vscode.workspace.findFiles(`**/*`, '**/node_modules/**', 5);
+    const fileList = files.map((f) => vscode.workspace.asRelativePath(f)).join(', ');
+    const prompt = `I searched the codebase for: "${query}". Explain what this is, where it's used, and suggest what I should look at or change. Project files include: ${fileList || '(none indexed).'}`;
+    await openPanelWithPrompt(prompt);
+  });
+
+  // ===========================================================================
+  // Feature: Terminal command capture / replay
+  // ===========================================================================
+
+  const captureTerminalCommandDisposable = vscode.commands.registerCommand('aicode.captureTerminalCommand', async () => {
+    if (!capturedTerminalCommands.length) {
+      const tryIt = await vscode.window.showInformationMessage(
+        'aicode: No terminal commands captured yet. Shell integration must be enabled in your terminal. Try running some commands first.',
+        'Open Terminal',
+      );
+      if (tryIt === 'Open Terminal') {
+        vscode.window.createTerminal().show();
+      }
+      return;
+    }
+
+    const items = capturedTerminalCommands.map((c) => ({
+      label: c.command,
+      description: c.exitCode !== undefined ? `exit ${c.exitCode}` : '',
+      detail: `${c.cwd ? `${c.cwd}  ·  ` : ''}${new Date(c.timestamp).toLocaleTimeString()}`,
+      id: c.id,
+    }));
+
+    const pick = await vscode.window.showQuickPick(items, {
+      placeHolder: 'Select a captured command',
+      title: 'aicode: Captured Terminal Commands',
+    });
+    if (!pick) return;
+
+    const action = await vscode.window.showQuickPick(
+      ['Replay in new terminal', 'Explain / fix with aicode', 'Copy to clipboard'],
+      { placeHolder: 'What would you like to do?' },
+    );
+    if (!action) return;
+
+    const cmd = capturedTerminalCommands.find((c) => c.id === pick.id);
+    if (!cmd) return;
+
+    if (action === 'Replay in new terminal') {
+      const terminal = vscode.window.createTerminal({ name: 'aicode replay', cwd: cmd.cwd });
+      terminal.show();
+      terminal.sendText(cmd.command, true);
+    } else if (action === 'Explain / fix with aicode') {
+      const exitNote = cmd.exitCode !== undefined && cmd.exitCode !== 0
+        ? ` It exited with code ${cmd.exitCode} — explain the failure and suggest a fix.`
+        : ' Explain what this command does.';
+      await openPanelWithPrompt(`Terminal command: \`${cmd.command}\`${exitNote}`);
+    } else if (action === 'Copy to clipboard') {
+      await vscode.env.clipboard.writeText(cmd.command);
+      vscode.window.showInformationMessage('aicode: Command copied to clipboard.');
+    }
+  });
+
+  const explainTerminalCommandDisposable = vscode.commands.registerCommand('aicode.explainTerminalCommand', async () => {
+    const input = await vscode.window.showInputBox({
+      prompt: 'Paste a terminal command to explain or fix',
+      placeHolder: 'e.g. docker run --rm -v $(pwd):/app node:18 npm test',
+      ignoreFocusOut: true,
+    });
+    if (!input) return;
+    await openPanelWithPrompt(`Explain this terminal command and point out any issues: \`${input.trim()}\``);
+  });
+
+  // ===========================================================================
+  // Feature: SCM / staging flows
+  // ===========================================================================
+
+  const reviewChangesDisposable = vscode.commands.registerCommand(
+    'aicode.reviewChanges',
+    async (resource?: { resourceUri?: vscode.Uri }) => {
+      try {
+        const git = await getGitApi();
+        const repo = git?.repositories[0];
+        if (!repo) {
+          vscode.window.showWarningMessage('aicode: No Git repository found. Open a folder that is a git repo.');
+          return;
+        }
+
+        let diff = '';
+        if (resource?.resourceUri) {
+          // Single file review from SCM resource context menu
+          diff = await repo.diff(false);
+          const rel = vscode.workspace.asRelativePath(resource.resourceUri);
+          // Filter diff to just this file heuristically
+          const marker = `diff --git a/${rel}`;
+          const idx = diff.indexOf(marker);
+          if (idx !== -1) {
+            const end = diff.indexOf('\ndiff --git ', idx + 1);
+            diff = end !== -1 ? diff.slice(idx, end) : diff.slice(idx);
+          }
+        } else {
+          diff = await repo.diff(true); // staged
+          if (!diff.trim()) {
+            diff = await repo.diff(false); // working tree
+          }
+        }
+
+        if (!diff.trim()) {
+          vscode.window.showInformationMessage('aicode: No changes to review.');
+          return;
+        }
+
+        const truncated = diff.length > 8000 ? diff.slice(0, 8000) + '\n…(diff truncated)' : diff;
+        await openPanelWithPrompt(`Review these code changes and point out issues, risks, and improvements:\n\`\`\`diff\n${truncated}\n\`\`\``);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        vscode.window.showErrorMessage(`aicode: Could not get SCM diff: ${msg}`);
+      }
+    },
+  );
+
+  const generateCommitMessageDisposable = vscode.commands.registerCommand('aicode.generateCommitMessage', async () => {
+    try {
+      const git = await getGitApi();
+      const repo = git?.repositories[0];
+      if (!repo) {
+        vscode.window.showWarningMessage('aicode: No Git repository found.');
+        return;
+      }
+
+      let diff = await repo.diff(true); // staged
+      if (!diff.trim()) {
+        const useUnstaged = await vscode.window.showInformationMessage(
+          'aicode: No staged changes found. Use unstaged (working tree) diff instead?',
+          'Yes', 'No',
+        );
+        if (useUnstaged !== 'Yes') return;
+        diff = await repo.diff(false);
+      }
+
+      if (!diff.trim()) {
+        vscode.window.showInformationMessage('aicode: No changes to generate a commit message for.');
+        return;
+      }
+
+      const truncated = diff.length > 6000 ? diff.slice(0, 6000) + '\n…(diff truncated)' : diff;
+
+      const result = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: 'aicode: Generating commit message…' },
+        () => callAppCommand(
+          `Write a concise conventional-commit message (type: scope: summary) for this diff. Reply with only the commit message, no extra text:\n\`\`\`diff\n${truncated}\n\`\`\``,
+        ),
+      );
+
+      const message = result.response.trim().replace(/^["']|["']$/g, '');
+      if (!message) {
+        vscode.window.showWarningMessage('aicode: Got an empty commit message response.');
+        return;
+      }
+
+      repo.inputBox.value = message;
+      logServerEvents(result.events);
+      vscode.window.showInformationMessage(`aicode: Commit message set → "${message.slice(0, 72)}"`);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      actionLog.append('error', msg, 'extension');
+      vscode.window.showErrorMessage(`aicode: Could not generate commit message: ${msg}`);
+    }
+  });
+
+  // ===========================================================================
+  // Feature: Debugger state integration
+  // ===========================================================================
+
+  const explainDebugStateDisposable = vscode.commands.registerCommand('aicode.explainDebugState', async () => {
+    const session = vscode.debug.activeDebugSession;
+    if (!session) {
+      const start = await vscode.window.showInformationMessage(
+        'aicode: No active debug session. Start debugging first (F5), then use this command when paused at a breakpoint.',
+        'Start Debugging',
+      );
+      if (start === 'Start Debugging') {
+        await vscode.commands.executeCommand('workbench.action.debug.start');
+      }
+      return;
+    }
+
+    try {
+      // Get threads to find the stopped one
+      const threads = await session.customRequest('threads');
+      const stopped = (threads?.threads ?? []).find((t: { id: number; name: string }) => t.id);
+      const threadId: number = stopped?.id ?? 1;
+
+      let frameInfo = '';
+      let varsInfo = '';
+      let callStackInfo = '';
+
+      try {
+        const stack = await session.customRequest('stackTrace', { threadId, levels: 5 });
+        const frames: Array<{ id: number; name: string; source?: { path?: string; name?: string }; line: number }> = stack?.stackFrames ?? [];
+        callStackInfo = frames
+          .map((f) => `  ${f.name} @ ${f.source?.name ?? 'unknown'}:${f.line}`)
+          .join('\n');
+        const top = frames[0];
+        if (top) {
+          frameInfo = `Stopped in ${top.name} at ${top.source?.path ?? top.source?.name ?? 'unknown file'}:${top.line}`;
+          try {
+            const scopes = await session.customRequest('scopes', { frameId: top.id });
+            const localScope = (scopes?.scopes ?? []).find((s: { name: string; variablesReference: number }) => s.name === 'Locals' || s.name === 'Local');
+            if (localScope) {
+              const vars = await session.customRequest('variables', { variablesReference: localScope.variablesReference });
+              varsInfo = (vars?.variables ?? [])
+                .slice(0, 20)
+                .map((v: { name: string; value: string; type?: string }) => `  ${v.name} = ${v.value}${v.type ? ` (${v.type})` : ''}`)
+                .join('\n');
+            }
+          } catch { /* vars not available */ }
+        }
+      } catch { /* stack not available */ }
+
+      const parts = [
+        `Debug session: ${session.name} (${session.type})`,
+        frameInfo ? `\n${frameInfo}` : '',
+        callStackInfo ? `\nCall stack:\n${callStackInfo}` : '',
+        varsInfo ? `\nLocal variables:\n${varsInfo}` : '',
+      ].filter(Boolean);
+
+      const context = parts.join('\n');
+      await openPanelWithPrompt(`${context}\n\nExplain what is happening at this debug breakpoint and suggest what might be wrong or what to investigate next.`);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      vscode.window.showErrorMessage(`aicode: Could not read debug state: ${msg}`);
+    }
+  });
+
+  // ===========================================================================
+  // Feature: Test explorer / failing tests
+  // ===========================================================================
+
+  const fixFailingTestsDisposable = vscode.commands.registerCommand('aicode.fixFailingTests', async () => {
+    if (lastFailedTestMessages.length) {
+      const prompt = `Fix these failing tests:\n${lastFailedTestMessages.slice(0, 30).join('\n')}`;
+      await openPanelWithPrompt(prompt);
+      return;
+    }
+
+    // Fall back: run tests via workspace task and capture output
+    const testTasks = (await vscode.tasks.fetchTasks()).filter(
+      (t) => t.group === vscode.TaskGroup.Test || String(t.name).toLowerCase().includes('test'),
+    );
+
+    if (!testTasks.length) {
+      // Ask for manual paste
+      const manual = await vscode.window.showInputBox({
+        prompt: 'Paste the test failure output for aicode to analyze',
+        placeHolder: 'FAIL src/foo.test.ts  ● foo › should work\n  Expected: 1\n  Received: 0',
+        ignoreFocusOut: true,
+      });
+      if (!manual) return;
+      await openPanelWithPrompt(`Fix these failing tests:\n${manual}`);
+      return;
+    }
+
+    const items = testTasks.map((t) => ({ label: t.name, description: t.source, task: t }));
+    const pick = await vscode.window.showQuickPick(items, {
+      placeHolder: 'Select a test task to run and analyze failures',
+      title: 'aicode: Run & Fix Tests',
+    });
+    if (!pick) return;
+
+    const output = vscode.window.createOutputChannel('aicode test run');
+    const lines: string[] = [];
+    const execution = await vscode.tasks.executeTask(pick.task);
+    output.show(true);
+
+    // Collect output via task end event
+    await new Promise<void>((resolve) => {
+      const sub = vscode.tasks.onDidEndTaskProcess((e) => {
+        if (e.execution === execution) {
+          sub.dispose();
+          resolve();
+        }
+      });
+      context.subscriptions.push(sub);
+    });
+
+    if (!lines.length) {
+      vscode.window.showInformationMessage('aicode: Task finished. Paste any failure output for analysis.');
+      return;
+    }
+
+    await openPanelWithPrompt(`Fix these failing tests:\n${lines.join('\n')}`);
   });
 
   const askDisposable = vscode.commands.registerCommand('aicode.ask', async () => {
@@ -2763,6 +3228,20 @@ export function activate(context: vscode.ExtensionContext) {
     editSelectionDisposable,
     inlineChatDisposable,
     panelDisposable,
+    // Problems panel
+    fixProblemsDisposable,
+    fixAllProblemsDisposable,
+    // Search
+    explainSearchResultsDisposable,
+    // Terminal
+    captureTerminalCommandDisposable,
+    explainTerminalCommandDisposable,
+    // SCM
+    reviewChangesDisposable,
+    generateCommitMessageDisposable,
+    // Debug / Tests
+    explainDebugStateDisposable,
+    fixFailingTestsDisposable,
     sidebarView,
     output,
     actionLog,
