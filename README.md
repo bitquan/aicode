@@ -11,6 +11,23 @@ GitHub Copilot instructions: [.github/copilot-instructions.md](.github/copilot-i
 ## Overview
 This project is a local-first coding assistant backed by Ollama. It exposes the same natural-language action system through the CLI, chat UI, local HTTP API, and VS Code extension, then layers repo search, safe editing, verification, learning, and status reporting on top.
 
+## Latest Release
+
+### feat(ui): finalize aicode panel redesign and visual polish
+
+- Composer-first panel layout is now the primary product surface.
+- Current Task readability, progress-state clarity, and visual hierarchy were refined for day-to-day use.
+- Right rail organization and diagnostics hierarchy were simplified for calmer scanning.
+- Empty states were polished to feel intentional and less noisy.
+
+Validation snapshot:
+
+- VS Code extension compile passed.
+- Extension smoke tests passed (18/18).
+- Full backend test suite passed (476/476).
+
+Status note: Panel redesign complete. Further UI work only by real-use feedback.
+
 ## Docs Map
 
 Use these docs as the main operating map for the repo:
