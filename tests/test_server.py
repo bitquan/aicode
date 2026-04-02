@@ -205,8 +205,9 @@ def test_execute_tool_run_tests():
         "returncode": 0,
         "timed_out": False,
     }
-    with patch("src.server.run_test_command", return_value=mock_result):
+    with patch("src.server.run_test_command", return_value=mock_result) as mock_run:
         result = _execute_tool("run_tests", {"command": "pytest"})
+    assert mock_run.call_args.kwargs["cwd"] is not None
     assert "returncode=0" in result
     assert "1 passed" in result
 
@@ -279,6 +280,24 @@ def test_dashboard_data_endpoint(client):
     payload = resp.json()
     assert "workspace" in payload
     assert "roadmap_percent" in payload
+
+
+def test_healthz_endpoint(client):
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"models": [{"model": "qwen2.5-coder:7b"}]}
+
+    with patch("src.server.requests.get", return_value=mock_response):
+        resp = client.get("/healthz")
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["status"] == "ok"
+    assert "workspace_root" in payload
+    assert "model" in payload
+    assert "base_url" in payload
+    assert payload["ollama"]["reachable"] is True
+    assert payload["ollama"]["model_available"] is True
+
 
 def test_dashboard_page_endpoint(client):
     resp = client.get("/dashboard")
@@ -367,3 +386,109 @@ def test_chat_completions_streaming(client):
             payload = json.loads(line[len("data:"):].strip())
             assert payload["object"] == "chat.completion.chunk"
             assert "choices" in payload
+
+
+def test_app_command_streaming_endpoint(client, monkeypatch):
+    class DummyService:
+        def parse_command(self, command: str):
+            from src.tools.commanding import ActionRequest
+
+            return ActionRequest(action="status", confidence=0.9, raw_input=command)
+
+        def run_request(self, request, *, source="api"):
+            return {
+                "command": request.raw_input,
+                "action": "status",
+                "confidence": 0.9,
+                "response": "hello streamed world",
+                "applied_preferences": [],
+                "output_trace_id": "out_123",
+                "events": [{"kind": "route", "message": "Routed to status"}],
+            }
+
+    monkeypatch.setattr("src.server._app_service", DummyService())
+
+    with client.stream(
+        "POST",
+        "/v1/aicode/command/stream",
+        json={"command": "status"},
+    ) as response:
+        body = "".join(chunk for chunk in response.iter_text())
+
+    assert response.status_code == 200
+    assert "event: route" in body
+    assert "event: delta" in body
+    assert "event: done" in body
+    assert "hello streamed world" in body
+
+
+def test_editor_chat_endpoint(client):
+    mock_agent = MagicMock()
+    mock_agent.run_mode.return_value = "Use a helper function here."
+
+    with patch("src.server.CodingAgent", return_value=mock_agent):
+        response = client.post(
+            "/v1/aicode/editor/chat",
+            json={
+                "path": "src/demo.py",
+                "prompt": "What should I change?",
+                "current_content": "def demo():\n    return 1\n",
+                "selection": {
+                    "start": {"line": 0, "character": 0},
+                    "end": {"line": 1, "character": 12},
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["response"] == "Use a helper function here."
+    assert payload["events"][0]["kind"] == "read"
+    assert payload["events"][1]["kind"] == "chat"
+
+
+def test_editor_preview_edit_file_mode(client):
+    mock_agent = MagicMock()
+    mock_agent.rewrite_file.return_value = "print('updated')\n"
+
+    with patch("src.server.CodingAgent", return_value=mock_agent):
+        response = client.post(
+            "/v1/aicode/editor/preview-edit",
+            json={
+                "path": "src/demo.py",
+                "instruction": "Update the print value",
+                "current_content": "print('original')\n",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["mode"] == "file"
+    assert payload["updated_content"] == "print('updated')\n"
+    assert "--- a/src/demo.py" in payload["diff"]
+    assert payload["events"][1]["kind"] == "edit"
+
+
+def test_editor_preview_edit_selection_mode(client):
+    mock_agent = MagicMock()
+    mock_agent.rewrite_selection.return_value = "answer = 42"
+
+    with patch("src.server.CodingAgent", return_value=mock_agent):
+        response = client.post(
+            "/v1/aicode/editor/preview-edit",
+            json={
+                "path": "src/demo.py",
+                "instruction": "Use a clearer variable name",
+                "current_content": "value = 1\nprint(value)\n",
+                "selection": {
+                    "start": {"line": 0, "character": 0},
+                    "end": {"line": 0, "character": 9},
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["mode"] == "selection"
+    assert payload["replacement_text"] == "answer = 42"
+    assert payload["updated_content"] == "answer = 42\nprint(value)\n"

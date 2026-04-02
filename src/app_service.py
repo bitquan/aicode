@@ -48,6 +48,11 @@ class AppService:
             tools_used=[action],
             eval_summary=result_status,
         )
+        events = [
+            {"kind": "command", "message": command},
+            {"kind": "route", "message": f"Routed to {action}"},
+            {"kind": "result", "message": f"Completed with {result_status}"},
+        ]
 
         return {
             "command": command,
@@ -56,9 +61,14 @@ class AppService:
             "response": response.text,
             "applied_preferences": applied_preference_ids,
             "output_trace_id": output_trace.get("output_id"),
+            "events": events,
         }
 
     def run_command(self, command: str, *, source: str = "api") -> dict[str, Any]:
         """Parse and execute a natural-language command."""
         request = self._engine.parse_request_model(command)
         return self.run_request(request, source=source)
+
+    def parse_command(self, command: str) -> ActionRequest:
+        """Parse a natural-language command into a typed request without executing it."""
+        return self._engine.parse_request_model(command)

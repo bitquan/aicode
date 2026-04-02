@@ -6,7 +6,7 @@ import sys
 from src.tools.command_guard import validate_command
 
 
-def run_test_command(command: str, timeout: int = 300):
+def run_test_command(command: str, timeout: int = 300, cwd: str | None = None):
     guard = validate_command(command)
     if not guard["allowed"]:
         return {
@@ -34,6 +34,7 @@ def run_test_command(command: str, timeout: int = 300):
             timeout=timeout,
             check=False,
             env=env,
+            cwd=cwd,
         )
         return {
             "command": command,

@@ -86,6 +86,36 @@ class CodingAgent:
         raw = self._call_ollama(layered)
         return self._extract_text_block(raw)
 
+    def rewrite_selection(
+        self,
+        file_path,
+        instruction,
+        selected_content,
+        before_context="",
+        after_context="",
+    ):
+        task_prompt = (
+            "You are editing a selected region from one file. Return only the replacement text "
+            "for the selected region. Do not explain anything.\n\n"
+            f"Target file: {file_path}\n"
+            f"Instruction: {instruction}\n\n"
+            "Selected content:\n"
+            "```\n"
+            f"{selected_content}\n"
+            "```\n\n"
+            "Context before selection:\n"
+            "```\n"
+            f"{before_context}\n"
+            "```\n\n"
+            "Context after selection:\n"
+            "```\n"
+            f"{after_context}\n"
+            "```"
+        )
+        layered = self._build_prompt(task_prompt, context=f"target_file={file_path}")
+        raw = self._call_ollama(layered)
+        return self._extract_text_block(raw)
+
     def plan_action(self, user_request):
         planner_prompt = (
             "Return only JSON with keys: action, target_path, instruction. "

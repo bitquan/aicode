@@ -29,6 +29,7 @@ def test_run_command_returns_structured_payload(mock_chat_engine, tmp_path):
     assert result["response"] == "ok"
     assert result["applied_preferences"] == []
     assert result["output_trace_id"].startswith("out_")
+    assert [event["kind"] for event in result["events"]] == ["command", "route", "result"]
 
 
 @patch("src.app_service.ChatEngine")

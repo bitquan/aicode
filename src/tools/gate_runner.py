@@ -12,7 +12,7 @@ def run_regression_gate(
     profile: str = "standard",
 ) -> dict:
     start = perf_counter()
-    tests = run_test_command(test_command)
+    tests = run_test_command(test_command, cwd=workspace_root)
     evals = run_evaluation_suite()
     budgets = evaluate_budgets(workspace_root)
     licenses = scan_dependency_licenses(workspace_root)

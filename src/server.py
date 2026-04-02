@@ -14,6 +14,7 @@ Environment variables:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
@@ -24,16 +25,19 @@ from typing import Any, AsyncGenerator
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
+import requests
 
+from src.agents.coding_agent import CodingAgent
+from src.app_service import AppService
 from src.config.settings import load_settings
 from src.prompts.layers import load_prompt_layers
 from src.providers.ollama_provider import OllamaProvider
+from src.tools.patch_applier import preview_diff
 from src.tools.repo_index import build_file_index
 from src.tools.semantic_retriever import retrieve_relevant_snippets
-from src.tools.test_runner import run_test_command
 from src.tools.dashboard import DashboardBuilder, render_dashboard_html
 from src.tools.learning_metrics import build_learning_metrics
-from src.app_service import AppService
+from src.tools.test_runner import run_test_command
 
 # ---------------------------------------------------------------------------
 # App bootstrap
@@ -153,9 +157,12 @@ _BUILTIN_TOOL_NAMES = {t["function"]["name"] for t in BUILTIN_TOOLS}
 
 def _safe_resolve(rel_path: str) -> Path:
     """Resolve *rel_path* relative to WORKSPACE_ROOT and verify it stays inside."""
-    target = (WORKSPACE_ROOT / rel_path).resolve()
-    if not str(target).startswith(str(WORKSPACE_ROOT)):
-        raise ValueError(f"Path escapes workspace: {rel_path!r}")
+    workspace_root = WORKSPACE_ROOT.resolve()
+    target = (workspace_root / rel_path).resolve()
+    try:
+        target.relative_to(workspace_root)
+    except ValueError as exc:
+        raise ValueError(f"Path escapes workspace: {rel_path!r}") from exc
     return target
 
 
@@ -179,7 +186,11 @@ def _execute_tool(name: str, arguments: dict[str, Any]) -> str:
 
     if name == "run_tests":
         command = arguments["command"]
-        result = run_test_command(command, timeout=TEST_COMMAND_TIMEOUT_SECONDS)
+        result = run_test_command(
+            command,
+            timeout=TEST_COMMAND_TIMEOUT_SECONDS,
+            cwd=str(WORKSPACE_ROOT),
+        )
         parts = [f"returncode={result['returncode']}"]
         if result["stdout"]:
             parts.append(f"stdout:\n{result['stdout']}")
@@ -188,9 +199,6 @@ def _execute_tool(name: str, arguments: dict[str, Any]) -> str:
         return "\n".join(parts)
 
     if name == "edit_file":
-        # Import lazily to avoid circular import issues at module load time
-        from src.agents.coding_agent import CodingAgent  # noqa: PLC0415
-
         path_str = arguments["path"]
         instruction = arguments["instruction"]
         try:
@@ -239,8 +247,57 @@ class AppCommandResponse(BaseModel):
     action: str
     confidence: float
     response: str
-    applied_preferences: list[str] = []
+    applied_preferences: list[str] = Field(default_factory=list)
     output_trace_id: str | None = None
+    events: list[dict[str, str]] = Field(default_factory=list)
+
+
+class HealthResponse(BaseModel):
+    status: str
+    workspace_root: str
+    model: str
+    base_url: str
+    ollama: dict[str, Any]
+
+
+class EditorPosition(BaseModel):
+    line: int
+    character: int
+
+
+class EditorRange(BaseModel):
+    start: EditorPosition
+    end: EditorPosition
+
+
+class EditorChatRequest(BaseModel):
+    path: str
+    prompt: str
+    current_content: str
+    selection: EditorRange | None = None
+
+
+class EditorChatResponse(BaseModel):
+    path: str
+    prompt: str
+    response: str
+    events: list[dict[str, str]] = Field(default_factory=list)
+
+
+class EditorEditPreviewRequest(BaseModel):
+    path: str
+    instruction: str
+    current_content: str
+    selection: EditorRange | None = None
+
+
+class EditorEditPreviewResponse(BaseModel):
+    path: str
+    mode: str
+    updated_content: str
+    diff: str
+    replacement_text: str | None = None
+    events: list[dict[str, str]] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -447,6 +504,111 @@ def _chunk_text(text: str, chunk_size: int = 8):
         yield text[i : i + chunk_size]
 
 
+def _offset_from_position(content: str, position: EditorPosition) -> int:
+    lines = content.splitlines(keepends=True)
+    if position.line < 0 or position.character < 0:
+        raise HTTPException(status_code=400, detail="Selection positions must be non-negative")
+    if position.line >= len(lines):
+        return len(content)
+
+    prefix = "".join(lines[: position.line])
+    line_text = lines[position.line]
+    line_without_newline = line_text.rstrip("\r\n")
+    character = min(position.character, len(line_without_newline))
+    return len(prefix) + character
+
+
+def _selection_offsets(content: str, selection: EditorRange) -> tuple[int, int]:
+    start = _offset_from_position(content, selection.start)
+    end = _offset_from_position(content, selection.end)
+    if end < start:
+        raise HTTPException(status_code=400, detail="Selection end must not be before start")
+    return start, end
+
+
+def _editor_events(*events: tuple[str, str]) -> list[dict[str, str]]:
+    return [{"kind": kind, "message": message} for kind, message in events]
+
+
+def _check_ollama_health() -> dict[str, Any]:
+    """Return a lightweight Ollama connectivity summary for diagnostics."""
+    url = f"{_settings.base_url.rstrip('/')}/api/tags"
+    try:
+        response = requests.get(url, timeout=1.5)
+        response.raise_for_status()
+        payload = response.json()
+        models = payload.get("models", [])
+        model_names = {
+            item.get("model", "") or item.get("name", "")
+            for item in models
+            if isinstance(item, dict)
+        }
+        model_available = _settings.model in model_names if model_names else False
+        detail = "reachable"
+        if model_names:
+            detail = (
+                f"reachable; configured model '{_settings.model}' is available"
+                if model_available
+                else f"reachable; configured model '{_settings.model}' was not listed"
+            )
+        return {
+            "reachable": True,
+            "detail": detail,
+            "model_available": model_available,
+        }
+    except requests.RequestException as exc:
+        return {
+            "reachable": False,
+            "detail": f"unreachable: {exc}",
+            "model_available": False,
+        }
+
+
+def _sse_event(event: str, payload: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
+
+
+async def _stream_app_command(command: str) -> AsyncGenerator[str, None]:
+    """Stream aicode app-command progress and response chunks as SSE events."""
+    try:
+        request = _app_service.parse_command(command)
+        yield _sse_event(
+            "route",
+            {
+                "command": command,
+                "action": request.action,
+                "confidence": request.confidence,
+            },
+        )
+        yield _sse_event("status", {"message": "Executing command"})
+        result = await asyncio.to_thread(_app_service.run_request, request, source="api_stream")
+        for event in result.get("events", []):
+            yield _sse_event("event", event)
+        yield _sse_event(
+            "result",
+            {
+                "command": result["command"],
+                "action": result["action"],
+                "confidence": result["confidence"],
+                "output_trace_id": result.get("output_trace_id"),
+                "applied_preferences": result.get("applied_preferences", []),
+            },
+        )
+        for chunk in _chunk_text(result["response"], chunk_size=24):
+            yield _sse_event("delta", {"text": chunk})
+        yield _sse_event(
+            "done",
+            {
+                "command": result["command"],
+                "action": result["action"],
+                "confidence": result["confidence"],
+                "response": result["response"],
+            },
+        )
+    except Exception as exc:  # pragma: no cover - defensive guard
+        yield _sse_event("error", {"message": str(exc)})
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -466,6 +628,18 @@ def list_models() -> dict[str, Any]:
                 "owned_by": "ollama",
             }
         ],
+    }
+
+
+@app.get("/healthz", response_model=HealthResponse)
+def healthz() -> dict[str, Any]:
+    """Return lightweight server health information."""
+    return {
+        "status": "ok",
+        "workspace_root": str(WORKSPACE_ROOT),
+        "model": _settings.model,
+        "base_url": _settings.base_url,
+        "ollama": _check_ollama_health(),
     }
 
 
@@ -528,6 +702,95 @@ def app_command(req: AppCommandRequest) -> dict[str, Any]:
     if not command:
         raise HTTPException(status_code=400, detail="Command must not be empty")
     return _app_service.run_command(command)
+
+
+@app.post("/v1/aicode/command/stream")
+async def app_command_stream(req: AppCommandRequest) -> StreamingResponse:
+    """Stream one natural-language app command as SSE events."""
+    command = req.command.strip()
+    if not command:
+        raise HTTPException(status_code=400, detail="Command must not be empty")
+    return StreamingResponse(
+        _stream_app_command(command),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/v1/aicode/editor/chat", response_model=EditorChatResponse)
+def editor_chat(req: EditorChatRequest) -> dict[str, Any]:
+    """Explain or discuss the current file/selection with editor-scoped context."""
+    _safe_resolve(req.path)
+    prompt = req.prompt.strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Prompt must not be empty")
+
+    selected_text = ""
+    if req.selection is not None:
+        start, end = _selection_offsets(req.current_content, req.selection)
+        selected_text = req.current_content[start:end]
+
+    context_blocks = [f"File: {req.path}"]
+    if selected_text:
+        context_blocks.append(f"Selected code:\n```\n{selected_text}\n```")
+    else:
+        context_blocks.append(f"Current file excerpt:\n```\n{req.current_content[:2000]}\n```")
+
+    agent = CodingAgent()
+    response = agent.run_mode("explain", prompt, context="\n\n".join(context_blocks))
+    return {
+        "path": req.path,
+        "prompt": prompt,
+        "response": response,
+        "events": _editor_events(
+            ("read", f"Loaded editor context for {req.path}"),
+            ("chat", "Generated inline explanation"),
+        ),
+    }
+
+
+@app.post("/v1/aicode/editor/preview-edit", response_model=EditorEditPreviewResponse)
+def editor_preview_edit(req: EditorEditPreviewRequest) -> dict[str, Any]:
+    """Generate an edit preview for the current file or selected region."""
+    _safe_resolve(req.path)
+    instruction = req.instruction.strip()
+    if not instruction:
+        raise HTTPException(status_code=400, detail="Instruction must not be empty")
+
+    agent = CodingAgent()
+    mode = "file"
+    replacement_text: str | None = None
+
+    if req.selection is not None:
+        start, end = _selection_offsets(req.current_content, req.selection)
+        selected_text = req.current_content[start:end]
+        before_context = req.current_content[max(0, start - 1000) : start]
+        after_context = req.current_content[end : min(len(req.current_content), end + 1000)]
+        replacement_text = agent.rewrite_selection(
+            req.path,
+            instruction,
+            selected_text,
+            before_context,
+            after_context,
+        )
+        updated_content = req.current_content[:start] + replacement_text + req.current_content[end:]
+        mode = "selection"
+    else:
+        updated_content = agent.rewrite_file(req.path, instruction, req.current_content)
+
+    diff = preview_diff(req.current_content, updated_content, req.path)
+    return {
+        "path": req.path,
+        "mode": mode,
+        "updated_content": updated_content,
+        "diff": diff,
+        "replacement_text": replacement_text,
+        "events": _editor_events(
+            ("read", f"Prepared edit preview for {req.path}"),
+            ("edit", f"Generated {mode} edit preview"),
+            ("diff", "Built diff preview"),
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------

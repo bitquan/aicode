@@ -1,8 +1,8 @@
 {
   "name": "aicode-thin-client",
-  "displayName": "aicode Thin Client",
-  "description": "Thin VS Code client for the local aicode app service",
-  "version": "0.0.1",
+  "displayName": "aicode Local Agent",
+  "description": "VS Code client with managed local server, editor chat, and diff preview for aicode",
+  "version": "0.1.1",
   "publisher": "aicode-local",
   "engines": {
     "vscode": "^1.90.0"
@@ -11,6 +11,9 @@
     "Other"
   ],
   "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "contributes": {
     "commands": [
       {
@@ -24,8 +27,54 @@
       {
         "command": "aicode.status",
         "title": "aicode: Check API Status"
+      },
+      {
+        "command": "aicode.restartServer",
+        "title": "aicode: Restart Local Server"
+      },
+      {
+        "command": "aicode.showActionLog",
+        "title": "aicode: Show Action Log"
+      },
+      {
+        "command": "aicode.editCurrentFile",
+        "title": "aicode: Edit Current File"
+      },
+      {
+        "command": "aicode.editSelection",
+        "title": "aicode: Edit Selection"
+      },
+      {
+        "command": "aicode.inlineChat",
+        "title": "aicode: Inline Chat"
       }
     ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "aicode.editSelection",
+          "when": "editorTextFocus && editorHasSelection",
+          "group": "navigation@10"
+        },
+        {
+          "command": "aicode.inlineChat",
+          "when": "editorTextFocus",
+          "group": "navigation@11"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "aicode.editCurrentFile",
+          "when": "editorTextFocus",
+          "group": "navigation@10"
+        },
+        {
+          "command": "aicode.inlineChat",
+          "when": "editorTextFocus",
+          "group": "navigation@11"
+        }
+      ]
+    },
     "configuration": {
       "title": "aicode",
       "properties": {
@@ -33,13 +82,34 @@
           "type": "string",
           "default": "http://127.0.0.1:8005",
           "description": "Base URL of local aicode server"
+        },
+        "aicode.autoStartServer": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically start and health-check the local aicode server when the extension activates."
+        },
+        "aicode.serverRoot": {
+          "type": "string",
+          "default": "",
+          "description": "Optional path to the Python app root that contains src/server.py. Defaults to the parent of this extension."
+        },
+        "aicode.workspaceRoot": {
+          "type": "string",
+          "default": "",
+          "description": "Optional workspace root passed to the local aicode server as WORKSPACE_ROOT. Defaults to serverRoot."
+        },
+        "aicode.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional Python interpreter used to launch the local aicode server. Defaults to .venv/bin/python when present."
         }
       }
     }
   },
   "scripts": {
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "watch": "tsc -watch -p ./",
+    "package:vsix": "mkdir -p dist && npx @vscode/vsce package --allow-missing-repository --out dist/aicode-local-agent-0.1.1.vsix"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
