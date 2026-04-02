@@ -157,6 +157,7 @@ def _handle_help_summary(engine: "ChatEngine", request: dict[str, Any]) -> str:
     server = awareness["server"]
     ollama = awareness["ollama"]
     web = awareness["web"]
+    self_improvement = awareness.get("self_improvement", {})
     commands_preview = ", ".join(awareness["commands"][:10])
     engine._log_interaction("help", "help_summary", True)
     return (
@@ -169,8 +170,9 @@ def _handle_help_summary(engine: "ChatEngine", request: dict[str, Any]) -> str:
         f"    Server = {'up' if server['reachable'] else 'down'} at {server['url']}\n"
         f"    Ollama = {'reachable' if ollama['reachable'] else 'unreachable'} at {ollama['url']}\n"
         f"    Web research = {web['summary']}\n"
+        f"    Self-improvement mode = {self_improvement.get('mode')} (latest run: {self_improvement.get('latest_run_id') or 'none'})\n"
         f"  • Executable actions: {commands_preview}, ...\n"
-        "Try: 'status', 'readiness', 'research add a clear chat button to the VS Code panel', or 'analyze schema'."
+        "Try: 'status', 'readiness', 'self-improve plan add a clear chat button to the VS Code panel', or 'analyze schema'."
     )
 
 
@@ -191,14 +193,20 @@ def _handle_self_aware_summary(engine: "ChatEngine", request: dict[str, Any]) ->
     server = awareness["server"]
     ollama = awareness["ollama"]
     web = awareness["web"]
+    self_improvement = awareness.get("self_improvement", {})
     commands_preview = ", ".join(awareness["commands"][:14])
     engine._log_interaction("self aware", "self_aware_summary", True)
     return (
         "🪞 Self-Awareness Snapshot\n"
         f"  • VS Code panel: {awareness['known_surfaces']['vscode_panel']}\n"
+        f"  • Editable surfaces: {', '.join(awareness.get('editable_surfaces', [])[:4])}\n"
         f"  • Server: {'up' if server['reachable'] else 'down'} ({server['url']})\n"
         f"  • Ollama: {'reachable' if ollama['reachable'] else 'unreachable'} ({ollama['url']})\n"
         f"  • Web research: {web['summary']}\n"
+        f"  • Self-improvement mode: {self_improvement.get('mode')}\n"
+        f"  • Latest run: {self_improvement.get('latest_run_id') or 'none'} ({self_improvement.get('latest_state') or 'idle'})\n"
+        f"  • Last accepted run: {self_improvement.get('last_accepted_run') or 'none'}\n"
+        f"  • Last rollback reason: {self_improvement.get('last_rollback_reason') or 'none'}\n"
         f"  • Executable actions: {commands_preview}"
     )
 

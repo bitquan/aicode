@@ -17,7 +17,8 @@ UNKNOWN_ACTION_MESSAGE = (
     "'optimize costs', 'team kb <query>', 'audit trail', 'rbac', 'model route <task>', "
     "'team analytics', 'language summary <path>', 'framework expert <task>', "
     "'search <query>', 'browse <path>', 'research <goal>', 'self-aware summary', "
-    "'learn', 'self build', or 'status'"
+    "'self-improve plan <goal>', 'self-improve run <goal>', 'approve self-improve <run_id>', "
+    "'self-improve status', 'learn', 'self build', or 'status'"
 )
 
 ACTION_HANDLER_METHODS = {
@@ -27,6 +28,10 @@ ACTION_HANDLER_METHODS = {
     "research": "_handle_research",
     "search": "_handle_search",
     "readiness": "_handle_readiness",
+    "self_improve_plan": "_handle_self_improve_plan",
+    "self_improve_run": "_handle_self_improve_run",
+    "self_improve_apply": "_handle_self_improve_apply",
+    "self_improve_status": "_handle_self_improve_status",
     "status": "_handle_status",
     "remember": "_handle_remember",
     "user_learn": "_handle_user_learn",
@@ -87,7 +92,7 @@ class ActionDispatcher:
 
         try:
             handler = getattr(engine, method_name)
-            text = handler(request.to_legacy_dict())
+            result = handler(request.to_legacy_dict())
         except Exception as exc:  # pragma: no cover - defensive guard
             return ActionResponse.from_text(
                 action=request.action,
@@ -95,8 +100,15 @@ class ActionDispatcher:
                 confidence=request.confidence,
             )
 
+        if isinstance(result, ActionResponse):
+            if not result.action:
+                result.action = request.action
+            if not result.confidence:
+                result.confidence = request.confidence
+            return result
+
         return ActionResponse.from_text(
             action=request.action,
-            text=text,
+            text=str(result),
             confidence=request.confidence,
         )

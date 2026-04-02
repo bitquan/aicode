@@ -73,6 +73,7 @@ class ActionResponse:
     text: str
     confidence: float = 0.0
     result_status: str = "success"
+    data: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_text(
@@ -81,10 +82,12 @@ class ActionResponse:
         action: str,
         text: str,
         confidence: float = 0.0,
+        data: Mapping[str, Any] | None = None,
     ) -> "ActionResponse":
         return cls(
             action=action,
             text=text,
             confidence=confidence,
             result_status=infer_result_status(text),
+            data=dict(data or {}),
         )

@@ -103,3 +103,44 @@ def test_run_command_recovers_from_edit_misroute(mock_chat_engine, tmp_path):
     assert result["route_attempts"] == ["edit", "research"]
     assert result["recovered_from_action"] == "edit"
     assert [event["kind"] for event in result["events"]] == ["command", "route", "reroute", "route", "result"]
+
+
+@patch("src.app_service.ChatEngine")
+def test_run_command_merges_self_improvement_metadata(mock_chat_engine, tmp_path):
+    engine = MagicMock()
+    engine.parse_request_model.return_value = ActionRequest(
+        action="self_improve_plan",
+        confidence=0.96,
+        raw_input="self-improve plan add a clear chat button to the VS Code panel",
+    )
+    engine.execute_request.return_value = ActionResponse(
+        action="self_improve_plan",
+        text="plan ready",
+        confidence=0.96,
+        result_status="success",
+        data={
+            "run_id": "sir_123",
+            "mode": "supervised",
+            "state": "proposed",
+            "goal": "add a clear chat button to the VS Code panel",
+            "candidate_summary": "User-requested improvement",
+            "likely_files": ["vscode-extension/src/extension.ts"],
+            "verification_plan": ["npm --prefix vscode-extension run compile", "Run readiness canaries"],
+            "web_research_used": False,
+            "rollback_performed": False,
+            "events": [{"kind": "state", "message": "Proposal created"}],
+        },
+    )
+    engine.get_last_applied_preferences.return_value = []
+    mock_chat_engine.return_value = engine
+
+    service = AppService(str(tmp_path))
+    result = service.run_command("self-improve plan add a clear chat button to the VS Code panel")
+
+    assert result["run_id"] == "sir_123"
+    assert result["mode"] == "supervised"
+    assert result["state"] == "proposed"
+    assert result["likely_files"] == ["vscode-extension/src/extension.ts"]
+    assert result["verification_plan"][-1] == "Run readiness canaries"
+    assert result["rollback_performed"] is False
+    assert any(event["kind"] == "state" for event in result["events"])

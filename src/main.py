@@ -501,18 +501,38 @@ def main():
         return
 
     if args and args[0] == "self-improve":
-        cycles = 1
-        target_score = 95.0
-        if "--cycles" in args:
-            idx = args.index("--cycles")
-            if idx + 1 < len(args):
-                cycles = int(args[idx + 1])
-        if "--target-score" in args:
-            idx = args.index("--target-score")
-            if idx + 1 < len(args):
-                target_score = float(args[idx + 1])
+        if any(flag in args for flag in ("--cycles", "--target-score")):
+            cycles = 1
+            target_score = 95.0
+            if "--cycles" in args:
+                idx = args.index("--cycles")
+                if idx + 1 < len(args):
+                    cycles = int(args[idx + 1])
+            if "--target-score" in args:
+                idx = args.index("--target-score")
+                if idx + 1 < len(args):
+                    target_score = float(args[idx + 1])
 
-        print(run_self_improvement_cycles(str(Path.cwd()), cycles=cycles, target_score=target_score))
+            print(run_self_improvement_cycles(str(Path.cwd()), cycles=cycles, target_score=target_score))
+            return
+
+        service = AppService(str(Path.cwd()))
+        if len(args) == 1:
+            command = "self-improve status"
+        elif args[1] == "status":
+            command = "self-improve status" if len(args) == 2 else f"self-improve status {' '.join(args[2:])}"
+        elif args[1] in {"plan", "run"}:
+            command = f"self-improve {args[1]} {' '.join(args[2:]).strip()}".strip()
+        elif args[1] in {"apply", "approve"}:
+            if len(args) < 3:
+                print("Usage: python -m src.main self-improve apply <run_id>")
+                return
+            command = f"approve self-improve {args[2]}"
+        else:
+            command = " ".join(args)
+
+        result = service.run_command(command, source="cli")
+        print(result["response"])
         return
 
     if args and args[0] == "resume-autofix":

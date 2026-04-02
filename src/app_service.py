@@ -105,7 +105,24 @@ class AppService:
         if len(route_attempts) > 1:
             events.append({"kind": "reroute", "message": recovery_note or f"Recovered to {action}"})
             events.append({"kind": "route", "message": f"Recovered to {action}"})
+        for event in response.data.get("events", []):
+            kind = str(event.get("kind", "")).strip()
+            message = str(event.get("message", "")).strip()
+            if kind and message:
+                events.append({"kind": kind, "message": message})
         events.append({"kind": "result", "message": f"Completed with {result_status}"})
+
+        response_metadata = {
+            "run_id": response.data.get("run_id"),
+            "mode": response.data.get("mode"),
+            "state": response.data.get("state"),
+            "goal": response.data.get("goal"),
+            "candidate_summary": response.data.get("candidate_summary"),
+            "likely_files": response.data.get("likely_files", []),
+            "verification_plan": response.data.get("verification_plan", []),
+            "web_research_used": response.data.get("web_research_used"),
+            "rollback_performed": response.data.get("rollback_performed"),
+        }
 
         return {
             "command": command,
@@ -117,6 +134,7 @@ class AppService:
             "route_attempts": route_attempts,
             "recovered_from_action": route_attempts[0] if len(route_attempts) > 1 else None,
             "events": events,
+            **response_metadata,
         }
 
     def run_command(self, command: str, *, source: str = "api") -> dict[str, Any]:

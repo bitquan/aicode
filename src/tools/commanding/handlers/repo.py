@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from src.tools.doc_fetcher import enhance_with_docs
 from src.tools.project_memory import remember_note
 from src.tools.readiness_suite import run_engine_readiness_suite
+from src.tools.research_support import (
+    build_research_payload as shared_build_research_payload,
+    render_research_summary as shared_render_research_summary,
+)
 from src.tools.repo_index import build_file_index
 from src.tools.semantic_retriever import retrieve_relevant_snippets
 from src.tools.status_report import build_status_report
@@ -24,6 +29,46 @@ RESEARCH_SURFACES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("Shared dispatcher", "src/tools/commanding/dispatcher.py", ("dispatcher", "registry", "action", "command")),
     ("App service", "src/app_service.py", ("api", "service", "surface", "command")),
 )
+
+TARGETED_TEST_COMMANDS: dict[str, list[str]] = {
+    "src/app_service.py": [
+        "./.venv/bin/python -m pytest -q tests/test_app_service.py tests/test_server_app_command.py",
+    ],
+    "src/server.py": [
+        "./.venv/bin/python -m pytest -q tests/test_server.py tests/test_server_app_command.py",
+    ],
+    "src/tools/chat_engine.py": [
+        "./.venv/bin/python -m pytest -q tests/test_chat_engine.py tests/test_chat_help_summary.py tests/test_self_build_chat.py",
+    ],
+    "src/tools/self_improve.py": [
+        "./.venv/bin/python -m pytest -q tests/test_self_improve.py tests/test_self_build_chat.py",
+    ],
+    "src/tools/commanding/request_parser.py": [
+        "./.venv/bin/python -m pytest -q tests/test_chat_help_summary.py tests/test_routing_regression_buckets.py tests/test_app_service.py",
+    ],
+    "src/tools/commanding/dispatcher.py": [
+        "./.venv/bin/python -m pytest -q tests/test_app_service.py tests/test_server_app_command.py",
+    ],
+    "src/tools/commanding/handlers/repo.py": [
+        "./.venv/bin/python -m pytest -q tests/test_readiness_suite.py tests/test_server.py tests/test_chat_engine.py",
+    ],
+    "vscode-extension/src/extension.ts": [
+        "npm --prefix vscode-extension run compile",
+        "npm --prefix vscode-extension run test:smoke",
+    ],
+    "vscode-extension/src/runtime_support.ts": [
+        "npm --prefix vscode-extension run compile",
+        "npm --prefix vscode-extension run test:smoke",
+    ],
+}
+
+FULL_SUITE_TARGETS = {
+    "src/app_service.py",
+    "src/server.py",
+    "src/tools/chat_engine.py",
+    "src/tools/commanding/request_parser.py",
+    "src/tools/commanding/dispatcher.py",
+}
 
 
 def _query_keywords(query: str) -> list[str]:
@@ -70,36 +115,79 @@ def _iter_index_paths(index: Any) -> list[str]:
     return []
 
 
-def _handle_search(engine: "ChatEngine", request: dict[str, Any]) -> str:
-    """Search codebase with doc suggestions."""
-    query = request.get("query", "")
-    snippets = retrieve_relevant_snippets(str(engine.workspace_root), query, limit=3)
+def _commands_for_path(path: str) -> list[str]:
+    if path in TARGETED_TEST_COMMANDS:
+        return TARGETED_TEST_COMMANDS[path]
 
-    doc_context = enhance_with_docs(str(engine.workspace_root), query)
-
-    result = ""
-    if doc_context:
-        result += doc_context + "\n\n"
-
-    if not snippets:
-        engine._log_interaction(f"search {query}", "search", False)
-        return f"{result}🔍 No code results for '{query}'" if result else f"🔍 No results for '{query}'"
-
-    result += f"🔍 Found {len(snippets)} matches for '{query}':\n"
-    for snip in snippets[:3]:
-        path = snip.get("path", "unknown")[:50]
-        result += f"  • {path}\n"
-
-    engine._log_interaction(f"search {query}", "search", True, doc_context)
-    return result
+    normalized = path.replace("\\", "/")
+    stem = normalized.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    if normalized.startswith("src/"):
+        direct_test = f"tests/test_{stem}.py"
+        repo_root = Path(__file__).resolve().parents[4]
+        if (repo_root / direct_test).exists():
+            return [f"./.venv/bin/python -m pytest -q {direct_test}"]
+        return []
+    if normalized.startswith("vscode-extension/"):
+        return ["npm --prefix vscode-extension run compile"]
+    return []
 
 
-def _handle_research(engine: "ChatEngine", request: dict[str, Any]) -> str:
-    """Research likely files and runtime constraints before proposing a change."""
-    goal = str(request.get("goal") or request.get("raw_input") or "").strip()
-    if not goal:
-        goal = "general repository research"
+def _needs_full_regression(paths: list[str], targeted_commands: list[str]) -> bool:
+    if not targeted_commands:
+        return True
+    for path in paths:
+        normalized = path.replace("\\", "/")
+        if normalized in FULL_SUITE_TARGETS:
+            return True
+        if normalized.startswith("src/tools/commanding/"):
+            return True
+    return False
 
+
+def build_verification_plan(paths: list[str]) -> dict[str, Any]:
+    targeted_commands: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        for command in _commands_for_path(path):
+            if command in seen:
+                continue
+            seen.add(command)
+            targeted_commands.append(command)
+
+    steps: list[dict[str, str]] = []
+    for command in targeted_commands:
+        steps.append({"kind": "command", "label": "targeted", "command": command})
+
+    steps.append({"kind": "readiness", "label": "readiness", "command": "GET /v1/aicode/readiness"})
+
+    if _needs_full_regression(paths, targeted_commands):
+        steps.append(
+            {
+                "kind": "command",
+                "label": "full",
+                "command": "./.venv/bin/python -m pytest -q",
+            }
+        )
+
+    descriptions = [
+        step["command"] if step["kind"] == "command" else "Run readiness canaries"
+        for step in steps
+    ]
+    return {
+        "steps": steps,
+        "descriptions": descriptions,
+    }
+
+
+def build_research_payload(
+    engine: "ChatEngine",
+    goal: str,
+    *,
+    prefer_web: bool = False,
+    max_results: int = 5,
+) -> dict[str, Any]:
+    """Return structured repo research for a change goal."""
+    goal = goal.strip() or "general repository research"
     keywords = _query_keywords(goal)
     awareness = engine.get_self_awareness_snapshot()
     web = awareness["web"]
@@ -130,52 +218,111 @@ def _handle_research(engine: "ChatEngine", request: dict[str, Any]) -> str:
         if path:
             ranked_paths.append((max(3, _score_path(path, keywords)), path, "semantic match"))
 
-    deduped: list[tuple[str, str]] = []
+    likely_files: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for _, path, reason in sorted(ranked_paths, key=lambda item: (-item[0], item[1])):
+    for score, path, reason in sorted(ranked_paths, key=lambda item: (-item[0], item[1])):
         if path in seen:
             continue
         seen.add(path)
-        deduped.append((path, reason))
-        if len(deduped) >= 5:
+        likely_files.append({"path": path, "reason": reason, "score": score})
+        if len(likely_files) >= max_results:
             break
 
     web_context = ""
-    prefer_web = bool(request.get("prefer_web"))
     if prefer_web and web["enabled"]:
         web_context = enhance_with_docs(str(engine.workspace_root), goal)
 
-    if not deduped:
-        engine._log_interaction(goal, "research", False, web_context or None)
-        return (
-            "🔎 Research Summary\n"
-            f"  • Goal: {goal}\n"
-            "  • I couldn't identify a strong file target yet.\n"
-            f"  • Web research: {web['summary']}\n"
-            "  • Next step: try naming the surface, file, or user-visible area you want changed."
-        )
+    verification = build_verification_plan([item["path"] for item in likely_files[:3]])
+    return {
+        "goal": goal,
+        "workflow": "research → identify files → edit/apply change",
+        "known_surfaces": awareness["known_surfaces"],
+        "server": awareness["server"],
+        "ollama": awareness["ollama"],
+        "web": web,
+        "web_research_used": bool(web_context),
+        "web_context": web_context,
+        "likely_files": likely_files,
+        "verification_plan": verification["descriptions"],
+        "verification_plan_steps": verification["steps"],
+    }
 
+
+def render_research_summary(payload: dict[str, Any]) -> str:
+    """Render structured research payload for conversational surfaces."""
+    web = payload["web"]
+    likely_files = payload.get("likely_files", [])
     lines = [
         "🔎 Research Summary",
-        f"  • Goal: {goal}",
-        "  • Suggested workflow: research → identify files → edit/apply change",
-        f"  • VS Code panel source: {awareness['known_surfaces']['vscode_panel']}",
-        f"  • Server: {'up' if awareness['server']['reachable'] else 'down'} at {awareness['server']['url']}",
-        f"  • Ollama: {'reachable' if awareness['ollama']['reachable'] else 'unreachable'} at {awareness['ollama']['url']}",
+        f"  • Goal: {payload.get('goal', 'general repository research')}",
+        f"  • Suggested workflow: {payload.get('workflow', 'research → identify files → edit/apply change')}",
+        f"  • VS Code panel source: {payload['known_surfaces']['vscode_panel']}",
+        f"  • Server: {'up' if payload['server']['reachable'] else 'down'} at {payload['server']['url']}",
+        f"  • Ollama: {'reachable' if payload['ollama']['reachable'] else 'unreachable'} at {payload['ollama']['url']}",
         f"  • Web research: {web['summary']}",
-        "  • Likely files:",
     ]
-    for path, reason in deduped:
-        lines.append(f"    - {path} ({reason})")
 
-    if web_context:
+    if not likely_files:
+        lines.extend(
+            [
+                "  • I couldn't identify a strong file target yet.",
+                "  • Next step: try naming the surface, file, or user-visible area you want changed.",
+            ]
+        )
+        return "\n".join(lines)
+
+    lines.append("  • Likely files:")
+    for item in likely_files:
+        lines.append(f"    - {item['path']} ({item['reason']})")
+
+    lines.append("  • Expected verification:")
+    for item in payload.get("verification_plan", []):
+        lines.append(f"    - {item}")
+
+    if payload.get("web_context"):
         lines.append("")
-        lines.append(web_context)
+        lines.append(str(payload["web_context"]))
 
     lines.append("")
     lines.append("  • Proposed next step: I can patch the likely files above directly.")
-    engine._log_interaction(goal, "research", True, web_context or None)
     return "\n".join(lines)
+
+
+def _handle_search(engine: "ChatEngine", request: dict[str, Any]) -> str:
+    """Search codebase with doc suggestions."""
+    query = request.get("query", "")
+    snippets = retrieve_relevant_snippets(str(engine.workspace_root), query, limit=3)
+
+    doc_context = enhance_with_docs(str(engine.workspace_root), query)
+
+    result = ""
+    if doc_context:
+        result += doc_context + "\n\n"
+
+    if not snippets:
+        engine._log_interaction(f"search {query}", "search", False)
+        return f"{result}🔍 No code results for '{query}'" if result else f"🔍 No results for '{query}'"
+
+    result += f"🔍 Found {len(snippets)} matches for '{query}':\n"
+    for snip in snippets[:3]:
+        path = snip.get("path", "unknown")[:50]
+        result += f"  • {path}\n"
+
+    engine._log_interaction(f"search {query}", "search", True, doc_context)
+    return result
+
+
+def _handle_research(engine: "ChatEngine", request: dict[str, Any]) -> str:
+    """Research likely files and runtime constraints before proposing a change."""
+    goal = str(request.get("goal") or request.get("raw_input") or "").strip()
+    payload = shared_build_research_payload(
+        engine,
+        goal,
+        prefer_web=bool(request.get("prefer_web")),
+    )
+    text = shared_render_research_summary(payload)
+    engine._log_interaction(goal, "research", bool(payload.get("likely_files")), payload.get("web_context") or None)
+    return text
 
 
 def _handle_status(engine: "ChatEngine", request: dict[str, Any]) -> str:

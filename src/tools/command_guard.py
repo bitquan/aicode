@@ -7,6 +7,7 @@ ALLOWED_BINARIES = {
     "pytest",
     "ruff",
     "mypy",
+    "npm",
 }
 
 DANGEROUS_TOKENS = {

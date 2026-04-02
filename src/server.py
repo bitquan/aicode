@@ -39,6 +39,7 @@ from src.tools.repo_index import build_file_index
 from src.tools.semantic_retriever import retrieve_relevant_snippets
 from src.tools.dashboard import DashboardBuilder, render_dashboard_html
 from src.tools.learning_metrics import build_learning_metrics
+from src.tools.self_improve import get_latest_self_improvement_run, get_self_improvement_run
 from src.tools.test_runner import run_test_command
 
 # ---------------------------------------------------------------------------
@@ -260,6 +261,32 @@ class AppCommandResponse(BaseModel):
     events: list[dict[str, str]] = Field(default_factory=list)
     route_attempts: list[str] = Field(default_factory=list)
     recovered_from_action: str | None = None
+    run_id: str | None = None
+    mode: str | None = None
+    state: str | None = None
+    goal: str | None = None
+    candidate_summary: str | None = None
+    likely_files: list[str] = Field(default_factory=list)
+    verification_plan: list[str] = Field(default_factory=list)
+    web_research_used: bool | None = None
+    rollback_performed: bool | None = None
+
+
+class SelfImproveRunResponse(BaseModel):
+    run_id: str | None = None
+    mode: str | None = None
+    state: str | None = None
+    goal: str | None = None
+    candidate_summary: str | None = None
+    likely_files: list[str] = Field(default_factory=list)
+    verification_plan: list[str] = Field(default_factory=list)
+    web_research_used: bool | None = None
+    rollback_performed: bool = False
+    blocked_reason: str | None = None
+    last_error: str | None = None
+    events: list[dict[str, Any]] = Field(default_factory=list)
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
 class HealthResponse(BaseModel):
@@ -323,6 +350,34 @@ class EditorEditPreviewResponse(BaseModel):
     diff: str
     replacement_text: str | None = None
     events: list[dict[str, str]] = Field(default_factory=list)
+
+
+def _serialize_self_improve_run(run: dict[str, Any]) -> dict[str, Any]:
+    """Normalize persisted self-improvement run payloads for HTTP responses."""
+    likely_files = [
+        str(item.get("path", ""))
+        for item in run.get("likely_files", [])
+        if isinstance(item, dict) and item.get("path")
+    ]
+    if not likely_files and isinstance(run.get("likely_files"), list):
+        likely_files = [str(item) for item in run.get("likely_files", []) if item]
+
+    return {
+        "run_id": run.get("run_id"),
+        "mode": run.get("mode"),
+        "state": run.get("state"),
+        "goal": run.get("goal"),
+        "candidate_summary": run.get("candidate_summary"),
+        "likely_files": likely_files,
+        "verification_plan": [str(item) for item in run.get("verification_plan", [])],
+        "web_research_used": run.get("web_research_used"),
+        "rollback_performed": bool(run.get("rollback_performed", False)),
+        "blocked_reason": run.get("blocked_reason"),
+        "last_error": run.get("last_error"),
+        "events": run.get("events", []),
+        "created_at": run.get("created_at"),
+        "updated_at": run.get("updated_at"),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -747,6 +802,24 @@ async def app_command_stream(req: AppCommandRequest) -> StreamingResponse:
 def readiness_report() -> dict[str, Any]:
     """Run readiness canaries against the current in-memory engine/runtime."""
     return run_engine_readiness_suite(_app_service._engine)
+
+
+@app.get("/v1/aicode/self-improve/runs/latest", response_model=SelfImproveRunResponse)
+def latest_self_improve_run() -> dict[str, Any]:
+    """Return the latest persisted self-improvement run."""
+    run = get_latest_self_improvement_run(str(WORKSPACE_ROOT))
+    if run is None:
+        raise HTTPException(status_code=404, detail="No self-improvement runs found")
+    return _serialize_self_improve_run(run)
+
+
+@app.get("/v1/aicode/self-improve/runs/{run_id}", response_model=SelfImproveRunResponse)
+def self_improve_run_by_id(run_id: str) -> dict[str, Any]:
+    """Return a specific self-improvement run by id."""
+    run = get_self_improvement_run(str(WORKSPACE_ROOT), run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Self-improvement run not found: {run_id}")
+    return _serialize_self_improve_run(run)
 
 
 @app.post("/v1/aicode/editor/chat", response_model=EditorChatResponse)

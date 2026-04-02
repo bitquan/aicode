@@ -145,6 +145,54 @@ class ChatRequestParser:
         if self._looks_like_web_request(lower):
             return build("research", 0.88, goal=user_input, prefer_web=True)
 
+        if normalized.startswith("self-improve plan "):
+            goal = re.sub(
+                r"^(?:please |can you |could you |would you )?self-improve plan\s+",
+                "",
+                user_input.strip(),
+                flags=re.IGNORECASE,
+            ).strip()
+            return build("self_improve_plan", 0.96, goal=goal, prefer_web=self._looks_like_web_request(lower))
+
+        if normalized.startswith("self-improve run "):
+            goal = re.sub(
+                r"^(?:please |can you |could you |would you )?self-improve run\s+",
+                "",
+                user_input.strip(),
+                flags=re.IGNORECASE,
+            ).strip()
+            return build("self_improve_run", 0.96, goal=goal, prefer_web=self._looks_like_web_request(lower))
+
+        if normalized.startswith("approve self-improve "):
+            run_id = re.sub(
+                r"^(?:please |can you |could you |would you )?approve self-improve\s+",
+                "",
+                user_input.strip(),
+                flags=re.IGNORECASE,
+            ).strip()
+            return build("self_improve_apply", 0.97, run_id=run_id)
+
+        if normalized.startswith("self-improve apply "):
+            run_id = re.sub(
+                r"^(?:please |can you |could you |would you )?self-improve apply\s+",
+                "",
+                user_input.strip(),
+                flags=re.IGNORECASE,
+            ).strip()
+            return build("self_improve_apply", 0.97, run_id=run_id)
+
+        if normalized in {"self-improve status", "self improve status"}:
+            return build("self_improve_status", 0.95)
+
+        if normalized.startswith("self-improve status "):
+            run_id = re.sub(
+                r"^(?:please |can you |could you |would you )?self-improve status\s+",
+                "",
+                user_input.strip(),
+                flags=re.IGNORECASE,
+            ).strip()
+            return build("self_improve_status", 0.95, run_id=run_id)
+
         if lower.startswith(("research ", "investigate ")):
             goal = user_input.split(" ", 1)[1] if " " in user_input else user_input
             return build("research", 0.9, goal=goal, prefer_web=self._looks_like_web_request(lower))

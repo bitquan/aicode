@@ -313,3 +313,30 @@ def setup():
             plan["estimated_cycles"] = max(1, int(gap * 10))
         
         return plan
+
+    def record_run_outcome(
+        self,
+        *,
+        run_id: str,
+        state: str,
+        goal: str,
+        category: str,
+        rollback_performed: bool = False,
+        verification_passed: bool = False,
+    ) -> None:
+        """Persist recent self-improvement outcomes for future scoring feedback."""
+        outcomes = self.metrics.setdefault("self_improvement_outcomes", [])
+        outcomes.append(
+            {
+                "run_id": run_id,
+                "state": state,
+                "goal": goal,
+                "category": category,
+                "rollback_performed": rollback_performed,
+                "verification_passed": verification_passed,
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
+        self.metrics["self_improvement_outcomes"] = outcomes[-50:]
+        self.metrics["last_self_improvement_state"] = state
+        self._save_json(self.metrics_file, self.metrics)

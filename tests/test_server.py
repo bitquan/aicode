@@ -327,6 +327,54 @@ def test_readiness_endpoint(client, monkeypatch):
     assert payload["web_enabled"] is True
 
 
+def test_latest_self_improve_run_endpoint(client, monkeypatch):
+    monkeypatch.setattr(
+        "src.server.get_latest_self_improvement_run",
+        lambda workspace_root: {
+            "run_id": "sir_latest",
+            "mode": "supervised",
+            "state": "proposed",
+            "goal": "add a clear chat button",
+            "candidate_summary": "User-requested improvement",
+            "likely_files": [{"path": "vscode-extension/src/extension.ts", "reason": "VS Code panel", "score": 8}],
+            "verification_plan": ["npm --prefix vscode-extension run compile"],
+            "web_research_used": False,
+            "rollback_performed": False,
+            "events": [],
+        },
+    )
+
+    resp = client.get("/v1/aicode/self-improve/runs/latest")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["run_id"] == "sir_latest"
+    assert payload["state"] == "proposed"
+
+
+def test_self_improve_run_by_id_endpoint(client, monkeypatch):
+    monkeypatch.setattr(
+        "src.server.get_self_improvement_run",
+        lambda workspace_root, run_id: {
+            "run_id": run_id,
+            "mode": "supervised",
+            "state": "verified",
+            "goal": "fix routing",
+            "candidate_summary": "Fix a failing canary",
+            "likely_files": [{"path": "src/tools/commanding/request_parser.py", "reason": "parser", "score": 9}],
+            "verification_plan": ["./.venv/bin/python -m pytest -q tests/test_app_service.py"],
+            "web_research_used": False,
+            "rollback_performed": False,
+            "events": [],
+        },
+    )
+
+    resp = client.get("/v1/aicode/self-improve/runs/sir_known")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["run_id"] == "sir_known"
+    assert payload["state"] == "verified"
+
+
 def test_dashboard_page_endpoint(client):
     resp = client.get("/dashboard")
     assert resp.status_code == 200

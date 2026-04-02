@@ -4,9 +4,18 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from src.tools.commanding import ActionResponse
 from src.tools.learned_preferences import add_preference, apply_correction, clear_preferences
 from src.tools.learning_metrics import build_learning_metrics
 from src.tools.project_memory import remember_note
+from src.tools.self_improve import (
+    apply_self_improvement_run,
+    build_self_improvement_status_snapshot,
+    create_self_improvement_plan,
+    format_self_improvement_run,
+    get_latest_self_improvement_run,
+    get_self_improvement_run,
+)
 
 if TYPE_CHECKING:
     from src.tools.chat_engine import ChatEngine
@@ -162,6 +171,132 @@ def _handle_self_build(engine: "ChatEngine", request: dict[str, Any]) -> str:
     )
 
 
+def _handle_self_improve_plan(engine: "ChatEngine", request: dict[str, Any]) -> ActionResponse:
+    """Create a supervised self-improvement proposal without applying changes."""
+    goal = str(request.get("goal", "")).strip()
+    run = create_self_improvement_plan(
+        str(engine.workspace_root),
+        engine,
+        goal=goal,
+        prefer_web=bool(request.get("prefer_web", False)),
+        source="command",
+    )
+    engine._log_interaction(goal or "self-improve plan", "self_improve_plan", True)
+    return ActionResponse(
+        action="self_improve_plan",
+        text=format_self_improvement_run(run),
+        confidence=0.96,
+        result_status="success",
+        data={
+            "run_id": run["run_id"],
+            "mode": run["mode"],
+            "state": run["state"],
+            "goal": run["goal"],
+            "candidate_summary": run["candidate_summary"],
+            "likely_files": [item["path"] for item in run.get("likely_files", [])],
+            "verification_plan": run.get("verification_plan", []),
+            "web_research_used": bool(run.get("web_research_used", False)),
+            "rollback_performed": bool(run.get("rollback_performed", False)),
+            "events": run.get("events", []),
+        },
+    )
+
+
+def _handle_self_improve_run(engine: "ChatEngine", request: dict[str, Any]) -> ActionResponse:
+    """Supervised run entrypoint; in v1 this returns a proposal until explicitly approved."""
+    response = _handle_self_improve_plan(engine, request)
+    response.action = "self_improve_run"
+    response.text += "\n\n  • Supervised mode: approval is required before apply. Use `approve self-improve <run_id>`."
+    return response
+
+
+def _handle_self_improve_apply(engine: "ChatEngine", request: dict[str, Any]) -> ActionResponse:
+    """Apply an approved self-improvement proposal with bounded verification and rollback."""
+    run_id = str(request.get("run_id", "")).strip()
+    if not run_id:
+        return ActionResponse.from_text(
+            action="self_improve_apply",
+            text="⚠️ I need a run id. Try: `approve self-improve <run_id>`.",
+            confidence=0.96,
+        )
+
+    run = apply_self_improvement_run(str(engine.workspace_root), engine, run_id)
+    success = run.get("state") == "verified"
+    engine._log_interaction(f"approve self-improve {run_id}", "self_improve_apply", success)
+    result_status = "success" if run.get("state") == "verified" else "failure" if run.get("state") == "rolled_back" else "partial"
+    return ActionResponse(
+        action="self_improve_apply",
+        text=format_self_improvement_run(run),
+        confidence=0.97,
+        result_status=result_status,
+        data={
+            "run_id": run.get("run_id"),
+            "mode": run.get("mode", build_self_improvement_status_snapshot(str(engine.workspace_root)).get("mode")),
+            "state": run.get("state"),
+            "goal": run.get("goal", ""),
+            "candidate_summary": run.get("candidate_summary", ""),
+            "likely_files": [item["path"] for item in run.get("likely_files", [])],
+            "verification_plan": run.get("verification_plan", []),
+            "web_research_used": bool(run.get("web_research_used", False)),
+            "rollback_performed": bool(run.get("rollback_performed", False)),
+            "events": run.get("events", []),
+        },
+    )
+
+
+def _handle_self_improve_status(engine: "ChatEngine", request: dict[str, Any]) -> ActionResponse:
+    """Show the latest or requested self-improvement run."""
+    run_id = str(request.get("run_id", "")).strip()
+    if run_id:
+        run = get_self_improvement_run(str(engine.workspace_root), run_id)
+    else:
+        run = get_latest_self_improvement_run(str(engine.workspace_root))
+
+    if not run:
+        snapshot = build_self_improvement_status_snapshot(str(engine.workspace_root))
+        text = (
+            "♻️ Self-Improvement Status\n"
+            f"  • Mode: {snapshot.get('mode')}\n"
+            "  • No runs recorded yet.\n"
+            "  • Next step: `self-improve plan <goal>`"
+        )
+        data = {
+            "run_id": None,
+            "mode": snapshot.get("mode"),
+            "state": None,
+            "goal": "",
+            "candidate_summary": "",
+            "likely_files": [],
+            "verification_plan": [],
+            "web_research_used": False,
+            "rollback_performed": False,
+            "events": [],
+        }
+    else:
+        text = format_self_improvement_run(run)
+        data = {
+            "run_id": run.get("run_id"),
+            "mode": run.get("mode"),
+            "state": run.get("state"),
+            "goal": run.get("goal", ""),
+            "candidate_summary": run.get("candidate_summary", ""),
+            "likely_files": [item["path"] for item in run.get("likely_files", [])],
+            "verification_plan": run.get("verification_plan", []),
+            "web_research_used": bool(run.get("web_research_used", False)),
+            "rollback_performed": bool(run.get("rollback_performed", False)),
+            "events": run.get("events", []),
+        }
+
+    engine._log_interaction("self-improve status", "self_improve_status", True)
+    return ActionResponse(
+        action="self_improve_status",
+        text=text,
+        confidence=0.95,
+        result_status="success",
+        data=data,
+    )
+
+
 def _handle_knowledge_transfer(engine: "ChatEngine", request: dict[str, Any]) -> str:
     """Export/import knowledge base for sharing."""
     mode = request.get("mode", "export")
@@ -256,6 +391,10 @@ LEARNING_HANDLERS = {
     "_handle_clear_preferences": _handle_clear_preferences,
     "_handle_learn": _handle_learn,
     "_handle_self_build": _handle_self_build,
+    "_handle_self_improve_plan": _handle_self_improve_plan,
+    "_handle_self_improve_run": _handle_self_improve_run,
+    "_handle_self_improve_apply": _handle_self_improve_apply,
+    "_handle_self_improve_status": _handle_self_improve_status,
     "_handle_knowledge_transfer": _handle_knowledge_transfer,
     "_handle_prompt_lab": _handle_prompt_lab,
     "_handle_tool_builder": _handle_tool_builder,

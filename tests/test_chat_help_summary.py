@@ -53,12 +53,37 @@ def test_parse_self_aware_prompt_maps_to_self_aware_summary(engine):
     assert req['action'] == 'self_aware_summary'
 
 
+def test_parse_self_improve_plan_prompt_maps_to_self_improve_plan(engine):
+    req = engine.parse_request('self-improve plan add a clear chat button to the VS Code panel')
+    assert req['action'] == 'self_improve_plan'
+    assert req['goal'] == 'add a clear chat button to the VS Code panel'
+
+
+def test_parse_self_improve_apply_prompt_maps_to_self_improve_apply(engine):
+    req = engine.parse_request('approve self-improve sir_123')
+    assert req['action'] == 'self_improve_apply'
+    assert req['run_id'] == 'sir_123'
+
+
+def test_parse_self_improve_status_prompt_maps_to_self_improve_status(engine):
+    req = engine.parse_request('self-improve status')
+    assert req['action'] == 'self_improve_status'
+
+
 def test_execute_self_aware_summary_returns_runtime_snapshot(engine):
     snapshot = {
         'known_surfaces': {'vscode_panel': 'vscode-extension/src/extension.ts'},
+        'editable_surfaces': ['src/server.py', 'vscode-extension/src/extension.ts'],
         'server': {'reachable': False, 'url': 'http://127.0.0.1:8005'},
         'ollama': {'reachable': True, 'url': 'http://127.0.0.1:11434'},
         'web': {'summary': 'enabled (optional; explicit requests only)'},
+        'self_improvement': {
+            'mode': 'supervised',
+            'latest_run_id': 'sir_latest',
+            'latest_state': 'proposed',
+            'last_accepted_run': None,
+            'last_rollback_reason': None,
+        },
         'commands': ['generate', 'research', 'status', 'self_aware_summary'],
     }
     with patch.object(engine, 'get_self_awareness_snapshot', return_value=snapshot):
@@ -66,3 +91,4 @@ def test_execute_self_aware_summary_returns_runtime_snapshot(engine):
     assert 'VS Code panel' in result
     assert 'vscode-extension/src/extension.ts' in result
     assert 'Web research' in result
+    assert 'Self-improvement mode' in result

@@ -51,7 +51,7 @@ from src.tools.repo_index import build_file_index
 from src.tools.role_permissions import RolePermissions
 from src.tools.security_scanner import SecurityScanner
 from src.tools.self_builder import SelfBuilder
-from src.tools.self_improve import run_self_improvement_cycles
+from src.tools.self_improve import build_self_improvement_status_snapshot, run_self_improvement_cycles
 from src.tools.status_report import build_status_report
 from src.tools.team_knowledge_base import TeamKnowledgeBase
 from src.tools.tool_builder import ToolBuilder
@@ -297,10 +297,12 @@ class ChatEngine:
             "dispatcher": "src/tools/commanding/dispatcher.py",
             "app_service": "src/app_service.py",
         }
+        self_improvement = build_self_improvement_status_snapshot(str(self.workspace_root))
 
         return {
             "workspace_root": str(self.workspace_root),
             "known_surfaces": known_surfaces,
+            "editable_surfaces": sorted(known_surfaces.values()),
             "server": {
                 "reachable": bool(server_health),
                 "status": str(server_health.get("status", "unreachable")),
@@ -309,6 +311,7 @@ class ChatEngine:
             },
             "ollama": ollama,
             "web": self.web_policy(),
+            "self_improvement": self_improvement,
             "commands": sorted(action for action in ACTION_HANDLER_METHODS if action != "clarify"),
         }
 

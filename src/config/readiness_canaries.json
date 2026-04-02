@@ -24,5 +24,14 @@
       "VS Code panel",
       "Web research"
     ]
+  },
+  {
+    "name": "self_improve_status_is_available",
+    "prompt": "self-improve status",
+    "expected_action": "self_improve_status",
+    "response_must_include": [
+      "Self-Improvement Status",
+      "Mode:"
+    ]
   }
 ]
