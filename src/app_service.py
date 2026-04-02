@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from src.tools.chat_engine import ChatEngine
+from src.tools.commanding import ActionRequest
 from src.tools.learning_events import record_output_trace, record_prompt_event
 
 
@@ -16,13 +17,13 @@ class AppService:
         self.workspace_root = Path(workspace_root).resolve()
         self._engine = ChatEngine(str(self.workspace_root), load_context=False)
 
-    def run_command(self, command: str) -> dict[str, Any]:
-        """Parse and execute a natural-language command."""
-        request = self._engine.parse_request(command)
-        response = self._engine.execute(request)
-        action = request.get("action", "unknown")
-        confidence = request.get("confidence", 0.0)
-        result_status = self._infer_result_status(response)
+    def run_request(self, request: ActionRequest, *, source: str = "api") -> dict[str, Any]:
+        """Execute a typed request across shared app surfaces."""
+        command = request.raw_input or request.action
+        response = self._engine.execute_request(request)
+        action = response.action or request.action or "unknown"
+        confidence = request.confidence
+        result_status = response.result_status
         applied_preferences = self._engine.get_last_applied_preferences()
         applied_preference_ids = [
             pref.get("preference_id", "")
@@ -37,7 +38,7 @@ class AppService:
             confidence=float(confidence),
             action_taken=action,
             result_status=result_status,
-            source="api",
+            source=source,
         )
 
         output_trace = record_output_trace(
@@ -52,15 +53,12 @@ class AppService:
             "command": command,
             "action": action,
             "confidence": confidence,
-            "response": response,
+            "response": response.text,
             "applied_preferences": applied_preference_ids,
             "output_trace_id": output_trace.get("output_id"),
         }
 
-    def _infer_result_status(self, response: str) -> str:
-        text = (response or "").lower()
-        if "⚠️" in text or "error" in text or "has issues" in text:
-            return "failure"
-        if "unable" in text or "partial" in text:
-            return "partial"
-        return "success"
+    def run_command(self, command: str, *, source: str = "api") -> dict[str, Any]:
+        """Parse and execute a natural-language command."""
+        request = self._engine.parse_request_model(command)
+        return self.run_request(request, source=source)

@@ -3,6 +3,7 @@
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
 from src.tools.chat_engine import ChatEngine, MarkdownRenderer
 
 
@@ -27,6 +28,9 @@ def test_chat_engine_parse_request_browse(mock_status, mock_index, mock_agent):
     request = engine.parse_request("show README.md")
     assert request["action"] == "browse"
     assert "readme" in request["path"].lower()
+    assert mock_status.call_count == 1
+    assert mock_status.call_args.kwargs == {"mode": "lightweight"}
+    assert Path(mock_status.call_args.args[0]).resolve() == Path(".").resolve()
 
 
 @patch('src.tools.chat_engine.CodingAgent')
@@ -50,6 +54,23 @@ def test_chat_engine_parse_request_other_actions(mock_status, mock_index, mock_a
     
     request = engine.parse_request("status")
     assert request["action"] == "status"
+    assert request["validation_mode"] == "lightweight"
+
+
+@patch('src.tools.chat_engine.CodingAgent')
+@patch('src.tools.chat_engine.build_file_index')
+@patch('src.tools.chat_engine.build_status_report')
+def test_chat_engine_parse_request_model_returns_typed_request(mock_status, mock_index, mock_agent):
+    """The shared parser should surface typed requests for app surfaces."""
+    mock_agent.return_value = MagicMock()
+    mock_index.return_value = {}
+    mock_status.return_value = {}
+
+    engine = ChatEngine(".")
+    request = engine.parse_request_model("status")
+
+    assert request.action == "status"
+    assert request.params["validation_mode"] == "lightweight"
 
 
 @patch('src.tools.chat_engine.CodingAgent')
@@ -234,3 +255,43 @@ def test_chat_engine_generate_without_streaming(mock_status, mock_index, mock_ag
     # Should still return a valid response
     assert response is not None
     assert len(response) > 0
+
+
+@patch('src.tools.chat_engine.CodingAgent')
+@patch('src.tools.chat_engine.build_file_index')
+@patch('src.tools.chat_engine.build_status_report')
+def test_chat_engine_debug_profile_coverage_handlers_are_methods(mock_status, mock_index, mock_agent):
+    """Regression guard: handlers must be real ChatEngine methods."""
+    mock_agent.return_value = MagicMock()
+    mock_index.return_value = {}
+    mock_status.return_value = {}
+
+    engine = ChatEngine(".")
+
+    assert callable(getattr(engine, "_handle_debug"))
+    assert callable(getattr(engine, "_handle_profile"))
+    assert callable(getattr(engine, "_handle_coverage"))
+
+
+@patch('src.tools.chat_engine.CodingAgent')
+@patch('src.tools.chat_engine.build_file_index')
+@patch('src.tools.chat_engine.build_status_report')
+def test_chat_engine_execute_dispatches_debug_profile_and_coverage(mock_status, mock_index, mock_agent):
+    """Regression guard: execute() must dispatch to the specialized handlers."""
+    mock_agent.return_value = MagicMock()
+    mock_index.return_value = {}
+    mock_status.return_value = {}
+
+    engine = ChatEngine(".")
+
+    with patch.object(engine, "_handle_debug", return_value="debug-ok") as mock_debug:
+        assert engine.execute({"action": "debug"}) == "debug-ok"
+        mock_debug.assert_called_once_with({"action": "debug"})
+
+    with patch.object(engine, "_handle_profile", return_value="profile-ok") as mock_profile:
+        assert engine.execute({"action": "profile"}) == "profile-ok"
+        mock_profile.assert_called_once_with({"action": "profile"})
+
+    with patch.object(engine, "_handle_coverage", return_value="coverage-ok") as mock_coverage:
+        assert engine.execute({"action": "coverage"}) == "coverage-ok"
+        mock_coverage.assert_called_once_with({"action": "coverage"})

@@ -4,13 +4,19 @@ import json
 from unittest.mock import MagicMock, patch
 
 from src.app_service import AppService
+from src.tools.commanding import ActionRequest, ActionResponse
 
 
 @patch("src.app_service.ChatEngine")
 def test_run_command_returns_structured_payload(mock_chat_engine, tmp_path):
     engine = MagicMock()
-    engine.parse_request.return_value = {"action": "status", "confidence": 0.9}
-    engine.execute.return_value = "ok"
+    engine.parse_request_model.return_value = ActionRequest(action="status", confidence=0.9, raw_input="status")
+    engine.execute_request.return_value = ActionResponse(
+        action="status",
+        text="ok",
+        confidence=0.9,
+        result_status="success",
+    )
     engine.get_last_applied_preferences.return_value = []
     mock_chat_engine.return_value = engine
 
@@ -28,8 +34,17 @@ def test_run_command_returns_structured_payload(mock_chat_engine, tmp_path):
 @patch("src.app_service.ChatEngine")
 def test_run_command_records_prompt_event(mock_chat_engine, tmp_path):
     engine = MagicMock()
-    engine.parse_request.return_value = {"action": "help_summary", "confidence": 0.95}
-    engine.execute.return_value = "👋 I can help"
+    engine.parse_request_model.return_value = ActionRequest(
+        action="help_summary",
+        confidence=0.95,
+        raw_input="what is your job?",
+    )
+    engine.execute_request.return_value = ActionResponse(
+        action="help_summary",
+        text="👋 I can help",
+        confidence=0.95,
+        result_status="success",
+    )
     engine.get_last_applied_preferences.return_value = []
     mock_chat_engine.return_value = engine
 

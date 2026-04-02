@@ -107,21 +107,18 @@ Build a local-first coding assistant that can:
 
 ## Proof Log (latest)
 
-- `python -m pytest -q` passes (`67 passed`).
+- `python -m pytest -q` passes end-to-end (`401 passed`).
+- CLI/chat/API app surfaces now share typed request/response models plus a centralized command dispatcher under `src/tools/commanding/`.
+- `python -m src.main status` now returns a lightweight snapshot by default, while `python -m src.main status --full` and `python -m src.main benchmark` remain the explicit validation-heavy paths.
+- Dashboard and startup context no longer trigger benchmark work implicitly.
+- GitHub Actions CI now runs `ruff`, `mypy`, and `pytest`, and local hooks are defined in `.pre-commit-config.yaml`.
 - `python -m src.main gate` returns `passed: True` (tests + eval checks).
 - `python -m src.main telemetry` returns trace/event/fix-memory summary.
 - `python -m src.main deps` returns dependency inventory from `pyproject.toml`.
 - `python -m src.main policy-check edit --role developer --auto` correctly blocks auto-apply.
-- `python -m src.main playbooks scaffold` created incident/rollback/hotfix playbooks under `docs/playbooks`.
-- `python -m src.main budget show|check` returned configured thresholds and pass/fail checks.
-- `python -m src.main license-scan` and `python -m src.main compliance` both passed on current dependencies.
-- `python -m pytest -q` now passes (`72 passed`).
 - `python -m src.main cost-estimate 1000 500` returns deterministic USD estimate based on configurable token rates.
 - `python -m src.main incident-timeline <trace_id>` and `incident-report <trace_id>` generate timeline/report artifacts from audit traces.
-- `python -m pytest -q` now passes (`75 passed`).
-- `python -m src.main benchmark` returns a check-based readiness score.
-- `python -m src.main status` returns consolidated roadmap/benchmark/budget/compliance posture.
-- `python -m src.main status-export` writes `.autofix_reports/status/latest_status.md`.
+- `python -m src.main status-export --full` writes `.autofix_reports/status/latest_status.md`.
 
 ---
 

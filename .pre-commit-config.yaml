@@ -1,0 +1,19 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff
+        entry: poetry run ruff check src/app_service.py src/main.py src/tools/chat_engine.py src/tools/dashboard.py src/tools/status_report.py src/tools/commanding tests/test_app_service.py tests/test_chat_engine.py tests/test_dashboard.py tests/test_repo_summary_chat.py tests/test_status_benchmark.py
+        language: system
+        pass_filenames: false
+      - id: mypy
+        name: mypy
+        entry: poetry run mypy
+        language: system
+        pass_filenames: false
+      - id: pytest
+        name: pytest
+        entry: poetry run pytest -q
+        language: system
+        pass_filenames: false
+        stages: [pre-push]

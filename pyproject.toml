@@ -13,6 +13,31 @@ uvicorn = ">=0.20.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.5"
+ruff = ">=0.6.9"
+mypy = ">=1.11.2"
+pre-commit = ">=4.0.1"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [".autofix_reports"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+explicit_package_bases = true
+follow_imports = "skip"
+warn_unused_ignores = true
+show_error_codes = true
+files = [
+  "src/tools/commanding",
+  "src/app_service.py",
+  "src/tools/status_report.py",
+]
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

@@ -50,3 +50,23 @@ def test_status_report_and_export(monkeypatch, tmp_path):
 
     out_path = export_status_markdown(str(tmp_path))
     assert out_path.endswith("latest_status.md")
+
+
+def test_status_report_lightweight_skips_benchmark(monkeypatch, tmp_path):
+    (tmp_path / "ROADMAP.md").write_text("- [x] 1) one\n", encoding="utf-8")
+    called = {"benchmark": 0}
+
+    def _boom(workspace_root):
+        called["benchmark"] += 1
+        raise AssertionError("benchmark should not run in lightweight mode")
+
+    monkeypatch.setattr("src.tools.status_report.run_benchmark_suite", _boom)
+    monkeypatch.setattr("src.tools.status_report.evaluate_budgets", lambda workspace_root: {"passed": True, "checks": {}})
+    monkeypatch.setattr("src.tools.status_report.summarize_costs", lambda workspace_root: {"estimated_total_cost_usd": 0.0})
+    monkeypatch.setattr("src.tools.status_report.build_compliance_summary", lambda workspace_root: {"license_scan_passed": True})
+
+    report = build_status_report(str(tmp_path), mode="lightweight")
+    assert called["benchmark"] == 0
+    assert report["validation_mode"] == "lightweight"
+    assert report["benchmark"]["skipped"] is True
+    assert report["readiness"] == "feature_complete_validation_deferred"

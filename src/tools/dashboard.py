@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Dict, Any
 import re
+from pathlib import Path
+from typing import Any, Dict
 
 from src.tools.status_report import build_status_report
 
@@ -16,7 +16,7 @@ class DashboardBuilder:
         self.workspace_root = Path(workspace_root).resolve()
 
     def build(self) -> Dict[str, Any]:
-        status = build_status_report(str(self.workspace_root))
+        status = build_status_report(str(self.workspace_root), mode="lightweight")
         roadmap_file = self.workspace_root / "DEVELOPMENT_ROADMAP.md"
         roadmap = self._parse_roadmap(roadmap_file)
 
@@ -24,6 +24,7 @@ class DashboardBuilder:
         return {
             "workspace": self.workspace_root.name,
             "readiness": status.get("readiness", "unknown"),
+            "validation_mode": status.get("validation_mode", "lightweight"),
             "benchmark_score": benchmark.get("score"),
             "benchmark_profile": benchmark.get("profile"),
             "roadmap_percent": roadmap.get("percent", 0.0),
@@ -63,6 +64,7 @@ def render_dashboard_html(payload: Dict[str, Any]) -> str:
     <div class=\"grid\">
       <div class=\"card\"><div class=\"title\">Workspace</div><div class=\"value\">{payload.get('workspace')}</div></div>
       <div class=\"card\"><div class=\"title\">Readiness</div><div class=\"value\">{payload.get('readiness')}</div></div>
+      <div class=\"card\"><div class=\"title\">Validation</div><div class=\"value\">{payload.get('validation_mode')}</div></div>
       <div class=\"card\"><div class=\"title\">Benchmark</div><div class=\"value\">{payload.get('benchmark_score')}</div></div>
       <div class=\"card\"><div class=\"title\">Roadmap</div><div class=\"value\">{payload.get('roadmap_percent')}%</div></div>
       <div class=\"card\"><div class=\"title\">Done</div><div class=\"value\">{payload.get('roadmap_done')}</div></div>

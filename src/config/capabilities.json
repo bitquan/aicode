@@ -4,9 +4,13 @@
   "edit_file": true,
   "evaluate_code": true,
   "structured_actions": true,
+  "shared_command_registry": true,
   "terminal_mode": true,
   "test_loop": true,
-  "debug_mode": false,
-  "notebook_mode": false,
+  "debug_mode": true,
+  "notebook_mode": true,
+  "local_api_server": true,
+  "vscode_integration": true,
+  "lightweight_status": true,
   "web_fetch": false
 }

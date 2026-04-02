@@ -1,13 +1,14 @@
-import sys
 import json
 import os
+import sys
 from pathlib import Path
 
 from src.agents.coding_agent import CodingAgent
+from src.app_service import AppService
 from src.tools.approval_policy import check_action_approval
 from src.tools.audit_export import export_audit_markdown
-from src.tools.autofix_state import load_autofix_state
 from src.tools.autofix import run_autofix_loop
+from src.tools.autofix_state import load_autofix_state
 from src.tools.benchmark_runner import run_benchmark_suite
 from src.tools.budget_tracker import (
     estimate_cost_usd,
@@ -17,37 +18,36 @@ from src.tools.budget_tracker import (
     set_budget_value,
     summarize_costs,
 )
+from src.tools.chat_engine import run_chat_session
+from src.tools.commanding import ActionRequest
 from src.tools.compliance_summary import build_compliance_summary
+from src.tools.context_packer import pack_context
 from src.tools.cost_attribution import summarize_costs_by_trace
 from src.tools.dependency_inventory import read_dependency_inventory
 from src.tools.docs_assistant import build_doc_update
 from src.tools.eval_runner import run_evaluation_suite
+from src.tools.fix_memory import retrieve_similar_fixes
 from src.tools.gate_runner import run_regression_gate
-from src.tools.context_packer import pack_context
+from src.tools.incident_automation import build_incident_timeline, generate_incident_report
+from src.tools.license_scanner import scan_dependency_licenses
+from src.tools.logger import load_audit_events
+from src.tools.patch_applier import apply_file_edit, preview_diff
 from src.tools.patch_guard import validate_unified_diff
+from src.tools.playbook_manager import get_playbook_status, scaffold_playbooks
+from src.tools.postmortem_builder import generate_postmortem_from_blocker
+from src.tools.project_memory import get_notes, remember_note, search_notes
 from src.tools.read_policy import ReadFirstPolicy, check_read_first
 from src.tools.release_notes import generate_release_notes
-from src.tools.retention import cleanup_reports
-from src.tools.license_scanner import scan_dependency_licenses
-from src.tools.incident_automation import build_incident_timeline, generate_incident_report
-from src.tools.postmortem_builder import generate_postmortem_from_blocker
-from src.tools.playbook_manager import get_playbook_status, scaffold_playbooks
-from src.tools.self_improve import run_self_improvement_cycles
-from src.tools.status_report import build_status_report, export_status_markdown
 from src.tools.repo_index import build_file_index
+from src.tools.retention import cleanup_reports
+from src.tools.self_improve import run_self_improvement_cycles
 from src.tools.semantic_retriever import retrieve_relevant_snippets
+from src.tools.status_report import export_status_markdown
 from src.tools.symbol_index import build_symbol_index
-from src.tools.telemetry import summarize_telemetry
-from src.tools.fix_memory import retrieve_similar_fixes
-from src.tools.project_memory import get_notes, remember_note, search_notes
 from src.tools.task_planner import build_task_plan
+from src.tools.telemetry import summarize_telemetry
 from src.tools.tool_policy import recommend_command
-from src.tools.logger import load_audit_events
-from src.tools.patch_applier import preview_diff, apply_file_edit
-from src.tools.chat_engine import run_chat_session
-from src.app_service import AppService
 from src.ui.terminal_ui import run_terminal_ui
-
 
 READ_POLICY = ReadFirstPolicy()
 
@@ -98,8 +98,8 @@ def _print_usage():
     print("  python -m src.main incident-report <trace_id>")
     print("  python -m src.main postmortem <trace_id>")
     print("  python -m src.main benchmark [--profile default|strict]")
-    print("  python -m src.main status")
-    print("  python -m src.main status-export")
+    print("  python -m src.main status [--full]")
+    print("  python -m src.main status-export [--full]")
     print("  python -m src.main self-improve [--cycles N] [--target-score X]")
     print("  python -m src.main resume-autofix <trace_id>")
     print("  python -m src.main eval")
@@ -135,7 +135,7 @@ def main():
             print("Usage: python -m src.main app-command \"<natural language command>\"")
             return
         service = AppService(str(Path.cwd()))
-        print(service.run_command(command))
+        print(service.run_command(command, source="cli"))
         return
 
     if args and args[0] == "audit":
@@ -182,7 +182,18 @@ def main():
         if len(args) < 2:
             print("Usage: python -m src.main search <query>")
             return
-        print(retrieve_relevant_snippets(str(Path.cwd()), " ".join(args[1:]), limit=5))
+        query = " ".join(args[1:]).strip()
+        service = AppService(str(Path.cwd()))
+        result = service.run_request(
+            ActionRequest(
+                action="search",
+                confidence=1.0,
+                raw_input=f"search {query}",
+                params={"query": query},
+            ),
+            source="cli",
+        )
+        print(result["response"])
         return
 
     if args and args[0] == "context":
@@ -470,11 +481,23 @@ def main():
         return
 
     if args and args[0] == "status":
-        print(build_status_report(str(Path.cwd())))
+        mode = "full" if "--full" in args else "lightweight"
+        service = AppService(str(Path.cwd()))
+        result = service.run_request(
+            ActionRequest(
+                action="status",
+                confidence=1.0,
+                raw_input="status --full" if mode == "full" else "status",
+                params={"validation_mode": mode},
+            ),
+            source="cli",
+        )
+        print(result["response"])
         return
 
     if args and args[0] == "status-export":
-        print(export_status_markdown(str(Path.cwd())))
+        mode = "full" if "--full" in args else "lightweight"
+        print(export_status_markdown(str(Path.cwd()), mode=mode))
         return
 
     if args and args[0] == "self-improve":
@@ -640,13 +663,9 @@ def main():
         _print_usage()
         return
 
-    generated_code = agent.generate_code(prompt)
-    print("\nGenerated Code:\n")
-    print(generated_code)
-
-    evaluation_result = agent.evaluate_code(generated_code)
-    print("\nEvaluation Result:\n")
-    print(evaluation_result)
+    service = AppService(str(Path.cwd()))
+    result = service.run_command(prompt, source="cli")
+    print(result["response"])
 
 if __name__ == "__main__":
     main()

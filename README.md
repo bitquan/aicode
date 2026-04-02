@@ -4,7 +4,7 @@ Master plan and checklist: [ROADMAP.md](ROADMAP.md)
 Learning baseline spec: [docs/LEARNING_BASELINE_V1.md](docs/LEARNING_BASELINE_V1.md)
 
 ## Overview
-This app generates code from a prompt using a local Ollama model and then performs basic validation by parsing and executing the returned code with a timeout.
+This project is a local-first coding assistant backed by Ollama. It exposes the same natural-language action system through the CLI, chat UI, local HTTP API, and VS Code extension, then layers repo search, safe editing, verification, learning, and status reporting on top.
 
 ## Prerequisites
 - Python 3.11+
@@ -16,6 +16,7 @@ This app generates code from a prompt using a local Ollama model and then perfor
    ```bash
    poetry install
    ```
+   If you already use the repo-local virtualenv, the VS Code tasks/launch configs target `./.venv/bin/python`.
 2. Ensure Ollama is running:
    ```bash
    ollama serve
@@ -30,7 +31,13 @@ This app generates code from a prompt using a local Ollama model and then perfor
 poetry run python -m src.main "Write a Python function that computes fibonacci(n)."
 ```
 
-If no prompt is passed, the CLI asks interactively.
+If no prompt is passed, the CLI asks interactively. Natural-language CLI requests now go through the same typed command registry that powers chat, the app service, and the API endpoint.
+
+Structured app command entrypoint:
+
+```bash
+poetry run python -m src.main app-command "status"
+```
 
 Terminal UI mode (MVP):
 
@@ -107,9 +114,17 @@ poetry run python -m src.main postmortem <trace_id>
 poetry run python -m src.main gate --profile strict
 poetry run python -m src.main benchmark --profile strict
 poetry run python -m src.main status
+poetry run python -m src.main status --full
 poetry run python -m src.main status-export
+poetry run python -m src.main status-export --full
 poetry run python -m src.main self-improve --cycles 3 --target-score 95
 ```
+
+## Status Modes
+
+- `python -m src.main status` returns a lightweight readiness snapshot and does not trigger the benchmark gate.
+- `python -m src.main status --full` runs the full validation-backed status report.
+- `python -m src.main benchmark` and `python -m src.main gate` remain the explicit full validation entrypoints for benchmark/gate workflows.
 
 ## Edit a File (Patch Workflow)
 Use the model to rewrite a specific file from an instruction:
@@ -147,11 +162,18 @@ It also classifies failures (for example: syntax, dependency, timeout, runtime) 
 poetry run pytest -q
 ```
 
+## Quality Tooling
+
+- GitHub Actions CI now runs `ruff`, `mypy`, and `pytest`.
+- Local hooks live in `.pre-commit-config.yaml`.
+- The typed shared routing modules live under `src/tools/commanding/`.
+
 ## Notes
 - Default model: `qwen2.5-coder:7b`
 - Default Ollama URL: `http://127.0.0.1:11434`
 - Profile config lives in `src/config/profiles.json` (`local`, `dev`, `prod`) and is selected with `APP_PROFILE`.
 - Retry and timeout behavior can be overridden with `OLLAMA_TIMEOUT`, `OLLAMA_MAX_RETRIES`, and `OLLAMA_RETRY_BACKOFF`.
+- The VS Code workspace tasks and launch entries live in the parent workspace `.vscode/` folder.
 
 ## Autofix Behavior Details
 - If `--tests` is omitted, the tool auto-selects targeted tests (e.g. `src/foo.py` → `tests/test_foo.py` when present).

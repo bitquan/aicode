@@ -6,3 +6,6 @@ def test_load_capabilities_contains_core_flags():
     assert capabilities["generate_code"] is True
     assert capabilities["edit_file"] is True
     assert "structured_actions" in capabilities
+    assert capabilities["debug_mode"] is True
+    assert capabilities["notebook_mode"] is True
+    assert capabilities["shared_command_registry"] is True
