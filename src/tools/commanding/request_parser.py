@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable
 
 from src.tools.commanding.models import ActionRequest
@@ -14,8 +15,110 @@ class ChatRequestParser:
     def __init__(self, looks_like_code_request: Callable[[str], bool]):
         self._looks_like_code_request = looks_like_code_request
 
+    @staticmethod
+    def _strip_polite_prefixes(text: str) -> str:
+        lowered = text.strip().lower()
+        for prefix in ("please ", "can you ", "could you ", "would you "):
+            if lowered.startswith(prefix):
+                return lowered[len(prefix):].strip()
+        return lowered
+
+    @staticmethod
+    def _looks_like_path(text: str) -> bool:
+        candidate = text.strip().strip("`'\"")
+        if not candidate:
+            return False
+        if "/" in candidate or candidate.startswith((".", "src", "tests", "vscode-extension", ".vscode")):
+            return True
+        if re.search(r"\.[a-z0-9]{1,8}$", candidate.lower()):
+            return True
+        return candidate.lower() in {
+            "readme",
+            "readme.md",
+            "pyproject.toml",
+            "requirements.txt",
+            "package.json",
+            "tasks.json",
+            "launch.json",
+        }
+
+    def _looks_like_actionable_request(self, lower: str) -> bool:
+        normalized = self._strip_polite_prefixes(lower)
+        action_prefixes = (
+            "add ",
+            "build ",
+            "create ",
+            "implement ",
+            "support ",
+            "allow ",
+            "make ",
+            "improve ",
+            "enable ",
+            "introduce ",
+            "give me ",
+            "let's add ",
+        )
+        if not normalized.startswith(action_prefixes):
+            return False
+
+        if normalized.startswith(
+            (
+                "build tool ",
+                "build itself",
+                "self build",
+                "build myself",
+                "improve myself",
+                "self improve",
+                "self-improve",
+                "create pr",
+                "generate api",
+                "generate docs",
+            )
+        ):
+            return False
+
+        code_only_markers = ("function", "class", "method", "endpoint", "sql query", "unit test")
+        if any(marker in normalized for marker in code_only_markers):
+            return False
+
+        return True
+
+    @staticmethod
+    def _looks_like_web_request(lower: str) -> bool:
+        return any(
+            phrase in lower
+            for phrase in (
+                "use the web",
+                "use web",
+                "search the web",
+                "look online",
+                "online docs",
+                "web research",
+                "check documentation online",
+            )
+        )
+
+    @staticmethod
+    def _looks_like_self_awareness_request(lower: str) -> bool:
+        return any(
+            phrase in lower
+            for phrase in (
+                "self aware",
+                "self-aware",
+                "what can you actually execute",
+                "what commands can you execute",
+                "what features can you execute",
+                "can you use the web",
+                "is the server up",
+                "is ollama reachable",
+                "where is the vs code panel",
+                "where is the vscode panel",
+            )
+        )
+
     def parse(self, user_input: str) -> ActionRequest:
         lower = user_input.lower().strip()
+        normalized = self._strip_polite_prefixes(user_input)
 
         def build(action: str, confidence: float, **params: Any) -> ActionRequest:
             return ActionRequest(
@@ -25,21 +128,46 @@ class ChatRequestParser:
                 params=params,
             )
 
-        if any(lower.startswith(cmd) for cmd in ["browse ", "ls ", "show ", "open "]):
+        if lower.startswith(("browse ", "ls ")):
             parts = lower.split(" ", 1)
             path = parts[1] if len(parts) > 1 else "."
             return build("browse", 0.95, path=path)
 
+        if lower.startswith(("show ", "open ")):
+            parts = user_input.split(" ", 1)
+            path = parts[1] if len(parts) > 1 else "."
+            if self._looks_like_path(path):
+                return build("browse", 0.95, path=path)
+
+        if self._looks_like_self_awareness_request(lower):
+            return build("self_aware_summary", 0.92)
+
+        if self._looks_like_web_request(lower):
+            return build("research", 0.88, goal=user_input, prefer_web=True)
+
+        if lower.startswith(("research ", "investigate ")):
+            goal = user_input.split(" ", 1)[1] if " " in user_input else user_input
+            return build("research", 0.9, goal=goal, prefer_web=self._looks_like_web_request(lower))
+
         if lower.startswith("add "):
-            parts = lower.split(" to ")
+            parts = user_input.split(" to ", 1)
             if len(parts) == 2:
-                feature = parts[0].replace("add ", "").strip()
+                feature = parts[0].replace("add ", "", 1).strip()
                 target = parts[1].strip()
+                if self._looks_like_path(target):
+                    return build(
+                        "edit",
+                        0.85,
+                        target=target,
+                        instruction=f"Add {feature}",
+                    )
                 return build(
-                    "edit",
-                    0.85,
+                    "research",
+                    0.88,
+                    goal=user_input,
+                    feature=feature,
                     target=target,
-                    instruction=f"Add {feature}",
+                    prefer_web=self._looks_like_web_request(lower),
                 )
 
         if lower.startswith("fix "):
@@ -56,9 +184,17 @@ class ChatRequestParser:
             desc = lower.replace("write ", "").strip()
             return build("generate", 0.85, instruction=desc, stream=True)
 
+        if self._looks_like_actionable_request(lower):
+            return build("research", 0.78, goal=user_input, prefer_web=self._looks_like_web_request(lower))
+
         if lower.startswith(("search ", "find ", "where ")):
             query = lower.split(" ", 1)[1] if " " in lower else ""
             return build("search", 0.8, query=query)
+
+        if lower.startswith(
+            ("readiness", "run canaries", "run canary", "self improvement readiness", "self-improvement readiness")
+        ):
+            return build("readiness", 0.92)
 
         prompt_class = classify_prompt_type(user_input)
         if prompt_class.get("intent") == "repo_summary":
@@ -295,7 +431,10 @@ class ChatRequestParser:
                     break
             return build("framework_expert", 0.9, task=task or "general")
 
-        if self._looks_like_code_request(lower):
+        if self._looks_like_code_request(normalized):
             return build("generate", 0.65, instruction=user_input, stream=True)
+
+        if any(term in normalized for term in ("panel", "extension", "workspace", "command history", "click-to-replay")):
+            return build("research", 0.7, goal=user_input, prefer_web=self._looks_like_web_request(lower))
 
         return build("clarify", 0.35, original_input=user_input)

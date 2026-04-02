@@ -17,10 +17,10 @@ def engine(tmp_path):
     return eng
 
 
-def test_parse_ambiguous_prompt_routes_to_clarify(engine):
+def test_parse_actionable_prompt_routes_to_research(engine):
     req = engine.parse_request('please make this better')
-    assert req['action'] == 'clarify'
-    assert req['confidence'] < 0.5
+    assert req['action'] == 'research'
+    assert req['confidence'] >= 0.7
 
 
 def test_parse_clear_code_prompt_routes_to_generate(engine):
@@ -33,3 +33,4 @@ def test_execute_clarify_returns_followup_prompt(engine):
     result = engine.execute({'action': 'clarify', 'original_input': 'not sure what to do'})
     assert 'route this correctly' in result
     assert 'generate code' in result
+    assert 'research' in result

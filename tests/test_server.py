@@ -297,6 +297,34 @@ def test_healthz_endpoint(client):
     assert "base_url" in payload
     assert payload["ollama"]["reachable"] is True
     assert payload["ollama"]["model_available"] is True
+    assert payload["runtime"]["routing_generation"] >= 1
+    assert "started_at" in payload["runtime"]
+
+
+def test_readiness_endpoint(client, monkeypatch):
+    monkeypatch.setattr(
+        "src.server.run_engine_readiness_suite",
+        lambda engine: {
+            "status": "pass",
+            "passed": 3,
+            "failed": 0,
+            "total": 3,
+            "routing_generation": 3,
+            "readiness_suite_version": 1,
+            "server_reachable": True,
+            "ollama_reachable": True,
+            "web_enabled": True,
+            "known_vscode_panel": "vscode-extension/src/extension.ts",
+            "results": [],
+        },
+    )
+
+    resp = client.get("/v1/aicode/readiness")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["status"] == "pass"
+    assert payload["passed"] == 3
+    assert payload["web_enabled"] is True
 
 
 def test_dashboard_page_endpoint(client):

@@ -3,6 +3,18 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import * as vscode from 'vscode';
+import {
+  buildOllamaGuidance,
+  describeRuntimeMismatch,
+  discoverServerRoot,
+  isValidServerRoot,
+  loadRuntimeManifest,
+  looksLikeEditInstruction,
+  normalizeOllamaHealth,
+  shouldFallbackToNonStreaming,
+  type OllamaHealth,
+  type RuntimeMetadata,
+} from './runtime_support';
 
 type ActionEvent = {
   kind: string;
@@ -22,18 +34,13 @@ type AppCommandResponse = {
   events?: ActionEvent[];
 };
 
-type OllamaHealth = {
-  reachable: boolean;
-  detail: string;
-  model_available: boolean;
-};
-
 type HealthResponse = {
   status: string;
   workspace_root: string;
   model: string;
   base_url: string;
   ollama: OllamaHealth;
+  runtime?: RuntimeMetadata;
 };
 
 type EditorPosition = {
@@ -74,6 +81,14 @@ type EditorEditPreviewResponse = {
   diff: string;
   replacement_text?: string | null;
   events?: ActionEvent[];
+};
+
+type InlineSuggestion = {
+  id: string;
+  uri: vscode.Uri;
+  updatedContent: string;
+  mode: string;
+  prompt: string;
 };
 
 type ServerStatusSnapshot = {
@@ -150,18 +165,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function isValidServerRoot(candidate: string): boolean {
-  return fs.existsSync(path.join(candidate, 'src', 'server.py'));
-}
-
-function safeStatIsDirectory(candidate: string): boolean {
-  try {
-    return fs.statSync(candidate).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
 async function checkOllamaHealth(baseUrl: string, timeoutMs = 1500): Promise<OllamaHealth> {
   try {
     const payload = await fetchJson<{ models?: Array<{ model?: string; name?: string }> }>(
@@ -219,21 +222,6 @@ function parseSseBlock(block: string): StreamEvent | undefined {
   }
 }
 
-function normalizeOllamaHealth(
-  health: Partial<HealthResponse> | undefined,
-  fallbackBaseUrl?: string,
-): OllamaHealth {
-  const candidate = (health as { ollama?: Partial<OllamaHealth> } | undefined)?.ollama;
-  return {
-    reachable: Boolean(candidate?.reachable),
-    detail:
-      typeof candidate?.detail === 'string'
-        ? candidate.detail
-        : `unknown (using ${fallbackBaseUrl ?? defaultOllamaBaseUrl()})`,
-    model_available: Boolean(candidate?.model_available),
-  };
-}
-
 class ActionLogStore implements vscode.Disposable {
   private readonly entries: ActionLogEntry[] = [];
   private readonly emitter = new vscode.EventEmitter<readonly ActionLogEntry[]>();
@@ -281,6 +269,7 @@ class ServerManager implements vscode.Disposable {
   private lastOutputLines: string[] = [];
   private lastExitDetail = 'No server process launched yet.';
   private lastHealth: HealthResponse | undefined;
+  private lastRuntimeMismatch = '';
   private status: ServerStatusSnapshot = {
     text: '$(circle-large-outline) aicode',
     detail: `Server not connected (${healthUrl()})`,
@@ -306,6 +295,10 @@ class ServerManager implements vscode.Disposable {
 
   baseUrl(): string {
     return normalizeBaseUrl();
+  }
+
+  serverRoot(): string {
+    return this.resolveServerRoot();
   }
 
   autoStartEnabled(): boolean {
@@ -373,38 +366,7 @@ class ServerManager implements vscode.Disposable {
   }
 
   private detectServerRoot(): string | undefined {
-    const workspaceFolders = this.workspaceFolderPaths();
-    const candidates = new Set<string>();
-
-    for (const folder of workspaceFolders) {
-      candidates.add(folder);
-      candidates.add(path.join(folder, 'coding-ai-app'));
-
-      try {
-        const children = fs.readdirSync(folder, { withFileTypes: true });
-        for (const child of children) {
-          if (!child.isDirectory()) {
-            continue;
-          }
-          const childPath = path.join(folder, child.name);
-          candidates.add(childPath);
-          candidates.add(path.join(childPath, 'coding-ai-app'));
-        }
-      } catch {
-        // Ignore unreadable folders; diagnostics will cover the final resolution.
-      }
-    }
-
-    const devRoot = path.resolve(this.context.extensionPath, '..');
-    candidates.add(devRoot);
-
-    for (const candidate of candidates) {
-      if (isValidServerRoot(candidate)) {
-        return candidate;
-      }
-    }
-
-    return undefined;
+    return discoverServerRoot(this.workspaceFolderPaths(), this.context.extensionPath);
   }
 
   private resolveConfiguredPath(value: string | undefined, fallback: string): string {
@@ -510,6 +472,18 @@ class ServerManager implements vscode.Disposable {
       `Ollama URL: ${ollamaBase}`,
       `Ollama status: ${ollama.reachable ? 'reachable' : 'unreachable'} (${ollama.detail})`,
     ];
+    const runtimeMismatch = this.runtimeMismatch(this.lastHealth);
+    if (this.lastHealth?.runtime) {
+      lines.push(
+        `Server runtime: app=${this.lastHealth.runtime.app_version} routing=${this.lastHealth.runtime.routing_generation} started=${this.lastHealth.runtime.started_at ?? 'unknown'}`,
+      );
+    }
+    if (runtimeMismatch) {
+      lines.push(runtimeMismatch);
+    }
+    if (!ollama.reachable) {
+      lines.push(buildOllamaGuidance(ollamaBase));
+    }
     if (this.lastOutputLines.length) {
       lines.push('Recent server output:');
       lines.push(...this.lastOutputLines.slice(-8));
@@ -524,6 +498,11 @@ class ServerManager implements vscode.Disposable {
     this.output.appendLine('==========================');
     this.output.show(true);
     return diagnostics;
+  }
+
+  private runtimeMismatch(health: HealthResponse | undefined): string | undefined {
+    const expected = loadRuntimeManifest(this.resolveServerRoot());
+    return describeRuntimeMismatch(expected, health?.runtime);
   }
 
   private wireChildProcess(child: ChildProcess): void {
@@ -558,6 +537,10 @@ class ServerManager implements vscode.Disposable {
         workspace_root: String(rawHealth.workspace_root ?? this.resolveWorkspaceRoot()),
         model: String(rawHealth.model ?? 'unknown'),
         base_url: String(rawHealth.base_url ?? defaultOllamaBaseUrl()),
+        runtime:
+          rawHealth.runtime && typeof rawHealth.runtime === 'object'
+            ? (rawHealth.runtime as RuntimeMetadata)
+            : undefined,
         ollama:
           rawHealth.ollama && typeof rawHealth.ollama === 'object'
             ? normalizeOllamaHealth(rawHealth as HealthResponse, String(rawHealth.base_url ?? defaultOllamaBaseUrl()))
@@ -566,16 +549,24 @@ class ServerManager implements vscode.Disposable {
       this.lastHealth = health;
       const ollamaDetail = health.ollama.reachable
         ? `Ollama ready (${health.model})`
-        : `Ollama unavailable (${health.ollama.detail})`;
+        : `Ollama unavailable (${health.ollama.detail}). ${buildOllamaGuidance(health.base_url)}`;
+      const runtimeMismatch = this.runtimeMismatch(health);
+      if (runtimeMismatch && runtimeMismatch !== this.lastRuntimeMismatch) {
+        this.actionLog.append('runtime', runtimeMismatch, 'extension');
+      }
+      this.lastRuntimeMismatch = runtimeMismatch || '';
       this.updateStatus(
-        health.ollama.reachable ? '$(check) aicode' : '$(warning) aicode',
-        `Server ready at ${this.baseUrl()} using ${health.model}. ${ollamaDetail}`,
-        health.ollama.reachable,
+        health.ollama.reachable && !runtimeMismatch ? '$(check) aicode' : '$(warning) aicode',
+        runtimeMismatch
+          ? `${runtimeMismatch} ${ollamaDetail}`
+          : `Server ready at ${this.baseUrl()} using ${health.model}. ${ollamaDetail}`,
+        health.ollama.reachable && !runtimeMismatch,
       );
       return health;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.lastHealth = undefined;
+      this.lastRuntimeMismatch = '';
       this.updateStatus('$(warning) aicode', `Server not reachable: ${message}`, false);
       if (showErrors) {
         const choice = await vscode.window.showWarningMessage(
@@ -712,6 +703,26 @@ function buildInlineRange(editor: vscode.TextEditor): vscode.Range {
     return new vscode.Range(editor.selection.start, editor.selection.end);
   }
   return editor.document.lineAt(editor.selection.active.line).range;
+}
+
+function buildInlineSuggestionLink(suggestionId: string): string {
+  const args = encodeURIComponent(JSON.stringify([suggestionId]));
+  return `command:aicode.applyInlineSuggestion?${args}`;
+}
+
+function buildAssistantComment(response: string, suggestionId?: string): vscode.MarkdownString {
+  const body = suggestionId
+    ? `${response}\n\n[Apply suggestion](${buildInlineSuggestionLink(suggestionId)})`
+    : response;
+  const markdown = new vscode.MarkdownString(body);
+  markdown.isTrusted = Boolean(suggestionId);
+  markdown.supportHtml = false;
+  return markdown;
+}
+
+function runtimeMismatchForHealth(serverRoot: string, health: HealthResponse | undefined): string | undefined {
+  const expected = loadRuntimeManifest(serverRoot);
+  return describeRuntimeMismatch(expected, health?.runtime);
 }
 
 function panelHtml(): string {
@@ -1059,6 +1070,7 @@ export function activate(context: vscode.ExtensionContext) {
   const actionLog = new ActionLogStore(output);
   const serverManager = new ServerManager(context, output, actionLog);
   const commentController = vscode.comments.createCommentController('aicode-inline', 'aicode Inline');
+  const inlineSuggestions = new Map<string, InlineSuggestion>();
 
   let panel: vscode.WebviewPanel | undefined;
 
@@ -1078,15 +1090,24 @@ export function activate(context: vscode.ExtensionContext) {
 
   const formatHealthSummary = (health: HealthResponse): string => {
     const ollama = normalizeOllamaHealth(health, health.base_url);
+    const runtimeMismatch = runtimeMismatchForHealth(serverManager.serverRoot(), health);
     const ollamaSummary = ollama.reachable
       ? `Ollama ready at ${health.base_url}`
-      : `Ollama unavailable at ${health.base_url}: ${ollama.detail}`;
-    return `Server ready at ${normalizeBaseUrl()} (${health.model}). ${ollamaSummary}`;
+      : `Ollama unavailable at ${health.base_url}: ${ollama.detail} ${buildOllamaGuidance(health.base_url)}`;
+    const runtimeSummary = health.runtime
+      ? ` Runtime: v${health.runtime.app_version} / routing ${health.runtime.routing_generation}.`
+      : '';
+    const mismatchSummary = runtimeMismatch ? ` ${runtimeMismatch}` : '';
+    return `Server ready at ${normalizeBaseUrl()} (${health.model}). ${ollamaSummary}${runtimeSummary}${mismatchSummary}`;
   };
 
   const callAppCommand = async (command: string): Promise<AppCommandResponse> => {
     await serverManager.ensureModelReady();
     actionLog.append('command', command, 'client');
+    return sendAppCommand(command);
+  };
+
+  const sendAppCommand = async (command: string): Promise<AppCommandResponse> => {
     const result = await fetchJson<AppCommandResponse>(
       commandUrl(),
       {
@@ -1113,10 +1134,43 @@ export function activate(context: vscode.ExtensionContext) {
     });
     if (!response.ok) {
       const detail = await response.text();
+      if (shouldFallbackToNonStreaming(response.status)) {
+        actionLog.append(
+          'status',
+          `Streaming endpoint unavailable (${response.status}); falling back to standard command mode.`,
+          'extension',
+        );
+        const fallback = await sendAppCommand(command);
+        callbacks.onRoute?.({
+          action: fallback.action,
+          confidence: fallback.confidence,
+        });
+        callbacks.onDone?.({
+          action: fallback.action,
+          confidence: fallback.confidence,
+          response: fallback.response,
+        });
+        return fallback;
+      }
       throw new Error(`HTTP ${response.status}: ${detail}`);
     }
     if (!response.body) {
-      throw new Error('Streaming response body was not available.');
+      actionLog.append(
+        'status',
+        'Streaming response body was unavailable; falling back to standard command mode.',
+        'extension',
+      );
+      const fallback = await sendAppCommand(command);
+      callbacks.onRoute?.({
+        action: fallback.action,
+        confidence: fallback.confidence,
+      });
+      callbacks.onDone?.({
+        action: fallback.action,
+        confidence: fallback.confidence,
+        response: fallback.response,
+      });
+      return fallback;
     }
 
     const reader = response.body.getReader();
@@ -1308,6 +1362,7 @@ export function activate(context: vscode.ExtensionContext) {
     editor: vscode.TextEditor,
     prompt: string,
     response: string,
+    suggestion?: InlineSuggestion,
   ): void => {
     const thread = commentController.createCommentThread(
       editor.document.uri,
@@ -1319,7 +1374,7 @@ export function activate(context: vscode.ExtensionContext) {
           author: { name: 'You' },
         },
         {
-          body: new vscode.MarkdownString(response),
+          body: buildAssistantComment(response, suggestion?.id),
           mode: vscode.CommentMode.Preview,
           author: { name: 'aicode' },
         },
@@ -1328,6 +1383,9 @@ export function activate(context: vscode.ExtensionContext) {
     thread.label = 'aicode inline chat';
     thread.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
     thread.canReply = false;
+    if (suggestion) {
+      actionLog.append('suggest', `Inline suggestion ready for ${editor.document.fileName}`, 'client');
+    }
     actionLog.append('chat', `Attached inline chat thread to ${editor.document.fileName}`, 'client');
   };
 
@@ -1401,6 +1459,38 @@ export function activate(context: vscode.ExtensionContext) {
   const showActionLogDisposable = vscode.commands.registerCommand('aicode.showActionLog', () => {
     output.show(true);
   });
+
+  const applyInlineSuggestionDisposable = vscode.commands.registerCommand(
+    'aicode.applyInlineSuggestion',
+    async (suggestionId: string) => {
+      const suggestion = inlineSuggestions.get(String(suggestionId));
+      if (!suggestion) {
+        vscode.window.showWarningMessage('That inline suggestion is no longer available. Re-run inline chat to regenerate it.');
+        return;
+      }
+
+      try {
+        const document = await vscode.workspace.openTextDocument(suggestion.uri);
+        const editor = await vscode.window.showTextDocument(document, { preview: false });
+        const shouldApply = await openPreviewDiff(editor, {
+          path: suggestion.uri.fsPath,
+          mode: suggestion.mode,
+          updated_content: suggestion.updatedContent,
+          diff: '',
+        });
+        if (!shouldApply) {
+          return;
+        }
+        await applyUpdatedContent(editor, suggestion.updatedContent);
+        inlineSuggestions.delete(suggestion.id);
+        vscode.window.showInformationMessage('aicode applied the inline suggestion.');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        actionLog.append('error', message, 'extension');
+        vscode.window.showErrorMessage(`Could not apply inline suggestion: ${message}`);
+      }
+    },
+  );
 
   const editCurrentFileDisposable = vscode.commands.registerCommand(
     'aicode.editCurrentFile',
@@ -1479,11 +1569,37 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     try {
+      const shouldPrepareSuggestion = !editor.selection.isEmpty && looksLikeEditInstruction(prompt);
       const result = await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: 'Creating inline chat…' },
-        () => callEditorChat(editor, prompt),
+        async () => {
+          const [chatResult, preview] = await Promise.all([
+            callEditorChat(editor, prompt),
+            shouldPrepareSuggestion
+              ? callEditPreview(editor, prompt, true).catch((error) => {
+                  const message = error instanceof Error ? error.message : String(error);
+                  actionLog.append('suggest', `Inline suggestion unavailable: ${message}`, 'extension');
+                  return undefined;
+                })
+              : Promise.resolve(undefined),
+          ]);
+
+          let suggestion: InlineSuggestion | undefined;
+          if (preview) {
+            const id = `inline-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            suggestion = {
+              id,
+              uri: editor.document.uri,
+              updatedContent: preview.updated_content,
+              mode: preview.mode,
+              prompt,
+            };
+            inlineSuggestions.set(id, suggestion);
+          }
+          return { chatResult, suggestion };
+        },
       );
-      createInlineThread(editor, prompt, result.response);
+      createInlineThread(editor, prompt, result.chatResult.response, result.suggestion);
       vscode.window.showInformationMessage('aicode inline chat added to the editor.');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1617,6 +1733,7 @@ export function activate(context: vscode.ExtensionContext) {
     statusDisposable,
     restartDisposable,
     showActionLogDisposable,
+    applyInlineSuggestionDisposable,
     editCurrentFileDisposable,
     editSelectionDisposable,
     inlineChatDisposable,

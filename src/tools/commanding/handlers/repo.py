@@ -2,16 +2,72 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 from src.tools.doc_fetcher import enhance_with_docs
 from src.tools.project_memory import remember_note
+from src.tools.readiness_suite import run_engine_readiness_suite
 from src.tools.repo_index import build_file_index
 from src.tools.semantic_retriever import retrieve_relevant_snippets
 from src.tools.status_report import build_status_report
 
 if TYPE_CHECKING:
     from src.tools.chat_engine import ChatEngine
+
+
+RESEARCH_SURFACES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("VS Code panel", "vscode-extension/src/extension.ts", ("panel", "chat panel", "inline chat", "history", "button", "extension")),
+    ("Extension manifest", "vscode-extension/package.json", ("command", "commands", "menu", "palette", "extension")),
+    ("Server API", "src/server.py", ("server", "api", "endpoint", "health", "stream", "ollama")),
+    ("Shared request parser", "src/tools/commanding/request_parser.py", ("parser", "routing", "route", "intent", "clarify", "research")),
+    ("Shared dispatcher", "src/tools/commanding/dispatcher.py", ("dispatcher", "registry", "action", "command")),
+    ("App service", "src/app_service.py", ("api", "service", "surface", "command")),
+)
+
+
+def _query_keywords(query: str) -> list[str]:
+    stopwords = {
+        "the",
+        "and",
+        "for",
+        "with",
+        "into",
+        "that",
+        "this",
+        "from",
+        "your",
+        "have",
+        "make",
+        "build",
+        "create",
+        "add",
+        "please",
+        "could",
+        "would",
+        "should",
+    }
+    tokens = re.findall(r"[a-z0-9_+-]+", query.lower())
+    return [token for token in tokens if len(token) > 2 and token not in stopwords]
+
+
+def _score_path(path: str, keywords: list[str]) -> int:
+    lower = path.lower()
+    score = 0
+    for keyword in keywords:
+        if keyword in lower:
+            score += 2
+        elif keyword.rstrip("s") in lower:
+            score += 1
+    return score
+
+
+def _iter_index_paths(index: Any) -> list[str]:
+    if isinstance(index, list):
+        return [str(entry.get("path", "")) for entry in index if isinstance(entry, dict)]
+    if isinstance(index, dict):
+        return [str(key) for key in index.keys()]
+    return []
 
 
 def _handle_search(engine: "ChatEngine", request: dict[str, Any]) -> str:
@@ -36,6 +92,90 @@ def _handle_search(engine: "ChatEngine", request: dict[str, Any]) -> str:
 
     engine._log_interaction(f"search {query}", "search", True, doc_context)
     return result
+
+
+def _handle_research(engine: "ChatEngine", request: dict[str, Any]) -> str:
+    """Research likely files and runtime constraints before proposing a change."""
+    goal = str(request.get("goal") or request.get("raw_input") or "").strip()
+    if not goal:
+        goal = "general repository research"
+
+    keywords = _query_keywords(goal)
+    awareness = engine.get_self_awareness_snapshot()
+    web = awareness["web"]
+
+    index = engine.context.get("index", [])
+    if not index:
+        index = build_file_index(str(engine.workspace_root))
+        engine.context["index"] = index
+
+    ranked_paths: list[tuple[int, str, str]] = []
+    for label, path, hints in RESEARCH_SURFACES:
+        score = _score_path(path, keywords)
+        score += sum(3 for hint in hints if hint in goal.lower())
+        if score:
+            ranked_paths.append((score, path, label))
+
+    for path in _iter_index_paths(index):
+        score = _score_path(path, keywords)
+        if score:
+            ranked_paths.append((score, path, "repo match"))
+
+    try:
+        snippets = retrieve_relevant_snippets(str(engine.workspace_root), goal, limit=4)
+    except Exception:
+        snippets = []
+    for snippet in snippets:
+        path = str(snippet.get("path", ""))
+        if path:
+            ranked_paths.append((max(3, _score_path(path, keywords)), path, "semantic match"))
+
+    deduped: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for _, path, reason in sorted(ranked_paths, key=lambda item: (-item[0], item[1])):
+        if path in seen:
+            continue
+        seen.add(path)
+        deduped.append((path, reason))
+        if len(deduped) >= 5:
+            break
+
+    web_context = ""
+    prefer_web = bool(request.get("prefer_web"))
+    if prefer_web and web["enabled"]:
+        web_context = enhance_with_docs(str(engine.workspace_root), goal)
+
+    if not deduped:
+        engine._log_interaction(goal, "research", False, web_context or None)
+        return (
+            "🔎 Research Summary\n"
+            f"  • Goal: {goal}\n"
+            "  • I couldn't identify a strong file target yet.\n"
+            f"  • Web research: {web['summary']}\n"
+            "  • Next step: try naming the surface, file, or user-visible area you want changed."
+        )
+
+    lines = [
+        "🔎 Research Summary",
+        f"  • Goal: {goal}",
+        "  • Suggested workflow: research → identify files → edit/apply change",
+        f"  • VS Code panel source: {awareness['known_surfaces']['vscode_panel']}",
+        f"  • Server: {'up' if awareness['server']['reachable'] else 'down'} at {awareness['server']['url']}",
+        f"  • Ollama: {'reachable' if awareness['ollama']['reachable'] else 'unreachable'} at {awareness['ollama']['url']}",
+        f"  • Web research: {web['summary']}",
+        "  • Likely files:",
+    ]
+    for path, reason in deduped:
+        lines.append(f"    - {path} ({reason})")
+
+    if web_context:
+        lines.append("")
+        lines.append(web_context)
+
+    lines.append("")
+    lines.append("  • Proposed next step: I can patch the likely files above directly.")
+    engine._log_interaction(goal, "research", True, web_context or None)
+    return "\n".join(lines)
 
 
 def _handle_status(engine: "ChatEngine", request: dict[str, Any]) -> str:
@@ -66,6 +206,33 @@ def _handle_status(engine: "ChatEngine", request: dict[str, Any]) -> str:
         f"  Benchmark Score: {score}\n"
         f"  Roadmap: {status.get('roadmap', {}).get('percent', 'N/A')}% complete"
     )
+
+
+def _handle_readiness(engine: "ChatEngine", request: dict[str, Any]) -> str:
+    """Run self-improvement readiness canaries against the current engine/runtime."""
+    report = run_engine_readiness_suite(engine)
+    engine._log_interaction("readiness", "readiness", report.get("failed", 1) == 0)
+    lines = [
+        "🧪 Self-Improvement Readiness",
+        f"  • Status: {report.get('status')}",
+        f"  • Passed: {report.get('passed', 0)}/{report.get('total', 0)}",
+        f"  • Routing generation: {report.get('routing_generation')}",
+        f"  • Suite version: {report.get('readiness_suite_version')}",
+        f"  • Server reachable: {report.get('server_reachable')}",
+        f"  • Ollama reachable: {report.get('ollama_reachable')}",
+        f"  • Web enabled: {report.get('web_enabled')}",
+        f"  • VS Code panel: {report.get('known_vscode_panel')}",
+    ]
+    for item in report.get("results", [])[:5]:
+        verdict = "✅" if item.get("passed") else "❌"
+        lines.append(
+            f"  • {verdict} {item.get('name')}: "
+            f"{item.get('actual_action')} (expected {item.get('expected_action')})"
+        )
+        missing = item.get("missing_response_markers", [])
+        if missing:
+            lines.append(f"    missing markers: {', '.join(missing)}")
+    return "\n".join(lines)
 
 
 def _handle_remember(engine: "ChatEngine", request: dict[str, Any]) -> str:
@@ -532,7 +699,9 @@ def _handle_repo_summary(engine: "ChatEngine", request: dict[str, Any]) -> str:
 
 
 REPO_HANDLERS = {
+    "_handle_research": _handle_research,
     "_handle_search": _handle_search,
+    "_handle_readiness": _handle_readiness,
     "_handle_status": _handle_status,
     "_handle_remember": _handle_remember,
     "_handle_browse": _handle_browse,

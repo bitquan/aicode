@@ -13,6 +13,8 @@ def test_app_command_endpoint_returns_structured_payload(monkeypatch):
                 "action": "status",
                 "confidence": 0.9,
                 "response": "ok",
+                "route_attempts": ["status"],
+                "recovered_from_action": None,
             }
 
     monkeypatch.setattr(server, "_app_service", DummyService())
@@ -23,6 +25,7 @@ def test_app_command_endpoint_returns_structured_payload(monkeypatch):
     data = response.json()
     assert data["action"] == "status"
     assert data["response"] == "ok"
+    assert data["route_attempts"] == ["status"]
 
 
 def test_app_command_endpoint_rejects_empty_command():

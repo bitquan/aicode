@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 from typing import Any, Generator, Optional
+from urllib.error import URLError
+from urllib.request import urlopen
 
 from src.agents.coding_agent import CodingAgent
+from src.config.capabilities import load_capabilities
 from src.tools.agent_memory import AgentMemoryStore
 from src.tools.agent_router import AgentRouter
 from src.tools.analytics_dashboard import AnalyticsDashboard
@@ -14,7 +19,13 @@ from src.tools.architecture_analyzer import ArchitectureAnalyzer
 from src.tools.architecture_diagram_understanding import ArchitectureDiagramUnderstanding
 from src.tools.audit_trail import AuditTrail
 from src.tools.code_reviewer import CodeReviewer
-from src.tools.commanding import ActionDispatcher, ActionRequest, ActionResponse, ChatRequestParser
+from src.tools.commanding import (
+    ACTION_HANDLER_METHODS,
+    ActionDispatcher,
+    ActionRequest,
+    ActionResponse,
+    ChatRequestParser,
+)
 from src.tools.commanding.handlers import ALL_HANDLER_GROUPS
 from src.tools.cost_optimizer import CostOptimizer
 from src.tools.coverage_analyzer import TestCoverageAnalyzer
@@ -119,6 +130,7 @@ class ChatEngine:
     def __init__(self, workspace_root: str = ".", load_context: bool = True):
         self.workspace_root = Path(workspace_root).resolve()
         self.agent = CodingAgent()
+        self.capabilities = load_capabilities()
         self.context: dict[str, Any] = {}
         self.doc_fetcher = DocFetcher(str(self.workspace_root))
         self.self_builder = SelfBuilder(str(self.workspace_root))
@@ -216,6 +228,89 @@ class ChatEngine:
             "test case",
         )
         return any(signal in lower for signal in code_signals)
+
+    def _server_base_url(self) -> str:
+        host = os.getenv("HOST", "127.0.0.1").strip() or "127.0.0.1"
+        port = os.getenv("PORT", "8005").strip() or "8005"
+        return f"http://{host}:{port}"
+
+    @staticmethod
+    def _json_probe(url: str, timeout_seconds: float = 0.35) -> dict[str, Any]:
+        try:
+            with urlopen(url, timeout=timeout_seconds) as response:
+                payload = response.read().decode("utf-8")
+            parsed = json.loads(payload)
+            return parsed if isinstance(parsed, dict) else {}
+        except (OSError, ValueError, URLError):
+            return {}
+
+    def web_policy(self) -> dict[str, Any]:
+        policy = self.capabilities.get("web_policy", {})
+        if not isinstance(policy, dict):
+            policy = {}
+        enabled = bool(policy.get("enabled", self.capabilities.get("web_fetch", False)))
+        mode = str(policy.get("mode", "optional"))
+        requires_explicit_request = bool(policy.get("requires_explicit_request", True))
+        provider = str(policy.get("provider", "doc_fetcher"))
+        return {
+            "enabled": enabled,
+            "mode": mode,
+            "requires_explicit_request": requires_explicit_request,
+            "provider": provider,
+            "summary": (
+                f"{'enabled' if enabled else 'disabled'}"
+                f" ({mode}; {'explicit requests only' if requires_explicit_request else 'available by default'})"
+            ),
+        }
+
+    def get_self_awareness_snapshot(self) -> dict[str, Any]:
+        """Return live runtime and capability awareness for research/help flows."""
+        server_url = self._server_base_url()
+        server_health = self._json_probe(f"{server_url}/healthz")
+
+        ollama_url = str(
+            server_health.get("base_url")
+            or getattr(self.agent, "base_url", "http://127.0.0.1:11434")
+        ).rstrip("/")
+        ollama_payload = server_health.get("ollama")
+        if isinstance(ollama_payload, dict):
+            ollama = {
+                "reachable": bool(ollama_payload.get("reachable", False)),
+                "detail": str(ollama_payload.get("detail", "unknown")),
+                "url": ollama_url,
+                "model_available": bool(ollama_payload.get("model_available", False)),
+            }
+        else:
+            tags_payload = self._json_probe(f"{ollama_url}/api/tags")
+            ollama = {
+                "reachable": bool(tags_payload),
+                "detail": "reachable" if tags_payload else "unreachable",
+                "url": ollama_url,
+                "model_available": isinstance(tags_payload.get("models"), list),
+            }
+
+        known_surfaces = {
+            "vscode_panel": "vscode-extension/src/extension.ts",
+            "extension_manifest": "vscode-extension/package.json",
+            "server": "src/server.py",
+            "request_parser": "src/tools/commanding/request_parser.py",
+            "dispatcher": "src/tools/commanding/dispatcher.py",
+            "app_service": "src/app_service.py",
+        }
+
+        return {
+            "workspace_root": str(self.workspace_root),
+            "known_surfaces": known_surfaces,
+            "server": {
+                "reachable": bool(server_health),
+                "status": str(server_health.get("status", "unreachable")),
+                "url": server_url,
+                "workspace_root": str(server_health.get("workspace_root", self.workspace_root)),
+            },
+            "ollama": ollama,
+            "web": self.web_policy(),
+            "commands": sorted(action for action in ACTION_HANDLER_METHODS if action != "clarify"),
+        }
 
     def parse_request_model(self, user_input: str) -> ActionRequest:
         """Parse natural-language input into a typed action request."""

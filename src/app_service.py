@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -17,10 +18,59 @@ class AppService:
         self.workspace_root = Path(workspace_root).resolve()
         self._engine = ChatEngine(str(self.workspace_root), load_context=False)
 
+    @staticmethod
+    def _looks_like_path(value: str) -> bool:
+        candidate = value.strip().strip("`'\"")
+        if not candidate:
+            return False
+        if "/" in candidate or candidate.startswith((".", "src", "tests", "vscode-extension", ".vscode")):
+            return True
+        return bool(re.search(r"\.[a-z0-9]{1,8}$", candidate.lower()))
+
+    @classmethod
+    def _recoverable_fallback(cls, request: ActionRequest, response_text: str) -> tuple[str, str] | None:
+        text = (response_text or "").lower()
+
+        if request.action == "edit" and "file not found:" in text:
+            target = str(request.get("target", ""))
+            if target and not cls._looks_like_path(target) and request.raw_input:
+                return ("research", "Recovered from edit misroute after non-path target lookup failed.")
+
+        if request.action == "clarify":
+            raw = (request.raw_input or request.get("original_input", "") or "").strip()
+            normalized = raw.lower().strip()
+            for prefix in ("please ", "can you ", "could you ", "would you "):
+                if normalized.startswith(prefix):
+                    normalized = normalized[len(prefix):].strip()
+            if normalized.startswith(("add ", "build ", "create ", "implement ", "support ", "make ", "improve ")):
+                return ("research", "Recovered from low-confidence clarification by running repo research first.")
+
+        return None
+
     def run_request(self, request: ActionRequest, *, source: str = "api") -> dict[str, Any]:
         """Execute a typed request across shared app surfaces."""
         command = request.raw_input or request.action
         response = self._engine.execute_request(request)
+        route_attempts = [request.action]
+        recovery_note = ""
+
+        fallback = self._recoverable_fallback(request, response.text)
+        if fallback:
+            fallback_action, recovery_note = fallback
+            fallback_request = ActionRequest(
+                action=fallback_action,
+                confidence=max(float(request.confidence), 0.8),
+                raw_input=command,
+                params={
+                    "goal": command,
+                    "original_action": request.action,
+                    "recovery_reason": recovery_note,
+                },
+            )
+            response = self._engine.execute_request(fallback_request)
+            request = fallback_request
+            route_attempts.append(fallback_request.action)
+
         action = response.action or request.action or "unknown"
         confidence = request.confidence
         result_status = response.result_status
@@ -45,14 +95,17 @@ class AppService:
             workspace_root=str(self.workspace_root),
             prompt_event_id=str(prompt_event.get("id", "")),
             applied_preferences=applied_preference_ids,
-            tools_used=[action],
+            tools_used=route_attempts,
             eval_summary=result_status,
         )
         events = [
             {"kind": "command", "message": command},
-            {"kind": "route", "message": f"Routed to {action}"},
-            {"kind": "result", "message": f"Completed with {result_status}"},
+            {"kind": "route", "message": f"Routed to {route_attempts[0]}"},
         ]
+        if len(route_attempts) > 1:
+            events.append({"kind": "reroute", "message": recovery_note or f"Recovered to {action}"})
+            events.append({"kind": "route", "message": f"Recovered to {action}"})
+        events.append({"kind": "result", "message": f"Completed with {result_status}"})
 
         return {
             "command": command,
@@ -61,6 +114,8 @@ class AppService:
             "response": response.text,
             "applied_preferences": applied_preference_ids,
             "output_trace_id": output_trace.get("output_id"),
+            "route_attempts": route_attempts,
+            "recovered_from_action": route_attempts[0] if len(route_attempts) > 1 else None,
             "events": events,
         }
 

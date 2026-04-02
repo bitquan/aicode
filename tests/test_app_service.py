@@ -30,6 +30,8 @@ def test_run_command_returns_structured_payload(mock_chat_engine, tmp_path):
     assert result["applied_preferences"] == []
     assert result["output_trace_id"].startswith("out_")
     assert [event["kind"] for event in result["events"]] == ["command", "route", "result"]
+    assert result["route_attempts"] == ["status"]
+    assert result["recovered_from_action"] is None
 
 
 @patch("src.app_service.ChatEngine")
@@ -66,3 +68,38 @@ def test_run_command_records_prompt_event(mock_chat_engine, tmp_path):
     trace_row = json.loads(traces_path.read_text(encoding="utf-8").splitlines()[-1])
     assert trace_row["output_id"].startswith("out_")
     assert trace_row["prompt_event_id"] == last_row["id"]
+
+
+@patch("src.app_service.ChatEngine")
+def test_run_command_recovers_from_edit_misroute(mock_chat_engine, tmp_path):
+    engine = MagicMock()
+    engine.parse_request_model.return_value = ActionRequest(
+        action="edit",
+        confidence=0.85,
+        raw_input="Add a Clear Chat button to the VS Code panel",
+        params={"target": "the VS Code panel", "instruction": "Add a Clear Chat button"},
+    )
+    engine.execute_request.side_effect = [
+        ActionResponse(
+            action="edit",
+            text="❌ File not found: the VS Code panel",
+            confidence=0.85,
+            result_status="failure",
+        ),
+        ActionResponse(
+            action="research",
+            text="🔎 Research Summary\n  • VS Code panel source: vscode-extension/src/extension.ts",
+            confidence=0.88,
+            result_status="success",
+        ),
+    ]
+    engine.get_last_applied_preferences.return_value = []
+    mock_chat_engine.return_value = engine
+
+    service = AppService(str(tmp_path))
+    result = service.run_command("Add a Clear Chat button to the VS Code panel")
+
+    assert result["action"] == "research"
+    assert result["route_attempts"] == ["edit", "research"]
+    assert result["recovered_from_action"] == "edit"
+    assert [event["kind"] for event in result["events"]] == ["command", "route", "reroute", "route", "result"]

@@ -2,8 +2,9 @@
   "name": "aicode-thin-client",
   "displayName": "aicode Local Agent",
   "description": "VS Code client with managed local server, editor chat, and diff preview for aicode",
-  "version": "0.1.1",
+  "version": "0.1.4",
   "publisher": "aicode-local",
+  "license": "MIT",
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -47,6 +48,10 @@
       {
         "command": "aicode.inlineChat",
         "title": "aicode: Inline Chat"
+      },
+      {
+        "command": "aicode.applyInlineSuggestion",
+        "title": "aicode: Apply Inline Suggestion"
       }
     ],
     "menus": {
@@ -109,7 +114,8 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package:vsix": "mkdir -p dist && npx @vscode/vsce package --allow-missing-repository --out dist/aicode-local-agent-0.1.1.vsix"
+    "test:smoke": "npm run compile && node --test smoke/**/*.test.cjs",
+    "package:vsix": "mkdir -p dist && npx @vscode/vsce package --allow-missing-repository --out dist/aicode-local-agent-0.1.4.vsix"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

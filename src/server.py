@@ -29,10 +29,12 @@ import requests
 
 from src.agents.coding_agent import CodingAgent
 from src.app_service import AppService
+from src.config.runtime_manifest import build_runtime_metadata, utc_now_iso
 from src.config.settings import load_settings
 from src.prompts.layers import load_prompt_layers
 from src.providers.ollama_provider import OllamaProvider
 from src.tools.patch_applier import preview_diff
+from src.tools.readiness_suite import run_engine_readiness_suite
 from src.tools.repo_index import build_file_index
 from src.tools.semantic_retriever import retrieve_relevant_snippets
 from src.tools.dashboard import DashboardBuilder, render_dashboard_html
@@ -61,6 +63,12 @@ _system_prompt = _prompt_layers.get("system", "")
 WORKSPACE_ROOT = Path(os.getenv("WORKSPACE_ROOT", str(Path.cwd()))).resolve()
 _dashboard_builder = DashboardBuilder(str(WORKSPACE_ROOT))
 _app_service = AppService(str(WORKSPACE_ROOT))
+SERVER_STARTED_AT = utc_now_iso()
+RUNTIME_METADATA = build_runtime_metadata(
+    workspace_root=str(WORKSPACE_ROOT),
+    started_at=SERVER_STARTED_AT,
+    pid=os.getpid(),
+)
 
 # Maximum iterations in the tool-calling loop before forcing a final response.
 # Prevents infinite loops when the model keeps requesting tool calls.
@@ -250,6 +258,8 @@ class AppCommandResponse(BaseModel):
     applied_preferences: list[str] = Field(default_factory=list)
     output_trace_id: str | None = None
     events: list[dict[str, str]] = Field(default_factory=list)
+    route_attempts: list[str] = Field(default_factory=list)
+    recovered_from_action: str | None = None
 
 
 class HealthResponse(BaseModel):
@@ -258,6 +268,21 @@ class HealthResponse(BaseModel):
     model: str
     base_url: str
     ollama: dict[str, Any]
+    runtime: dict[str, Any]
+
+
+class ReadinessResponse(BaseModel):
+    status: str
+    passed: int
+    failed: int
+    total: int
+    routing_generation: int | None = None
+    readiness_suite_version: int | None = None
+    server_reachable: bool
+    ollama_reachable: bool
+    web_enabled: bool
+    known_vscode_panel: str
+    results: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class EditorPosition(BaseModel):
@@ -640,6 +665,7 @@ def healthz() -> dict[str, Any]:
         "model": _settings.model,
         "base_url": _settings.base_url,
         "ollama": _check_ollama_health(),
+        "runtime": RUNTIME_METADATA,
     }
 
 
@@ -715,6 +741,12 @@ async def app_command_stream(req: AppCommandRequest) -> StreamingResponse:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.get("/v1/aicode/readiness", response_model=ReadinessResponse)
+def readiness_report() -> dict[str, Any]:
+    """Run readiness canaries against the current in-memory engine/runtime."""
+    return run_engine_readiness_suite(_app_service._engine)
 
 
 @app.post("/v1/aicode/editor/chat", response_model=EditorChatResponse)

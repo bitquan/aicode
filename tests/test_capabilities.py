@@ -9,3 +9,5 @@ def test_load_capabilities_contains_core_flags():
     assert capabilities["debug_mode"] is True
     assert capabilities["notebook_mode"] is True
     assert capabilities["shared_command_registry"] is True
+    assert capabilities["web_fetch"] is True
+    assert capabilities["web_policy"]["mode"] == "optional"

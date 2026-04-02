@@ -51,6 +51,9 @@ def test_chat_engine_parse_request_other_actions(mock_status, mock_index, mock_a
     
     request = engine.parse_request("search foo")
     assert request["action"] == "search"
+
+    request = engine.parse_request("Add a Clear Chat button to the VS Code panel")
+    assert request["action"] == "research"
     
     request = engine.parse_request("status")
     assert request["action"] == "status"
@@ -71,6 +74,35 @@ def test_chat_engine_parse_request_model_returns_typed_request(mock_status, mock
 
     assert request.action == "status"
     assert request.params["validation_mode"] == "lightweight"
+
+
+@patch('src.tools.chat_engine.CodingAgent')
+@patch('src.tools.chat_engine.build_file_index')
+@patch('src.tools.chat_engine.build_status_report')
+def test_chat_engine_execute_research_surfaces_candidate_files(mock_status, mock_index, mock_agent):
+    mock_agent.return_value = MagicMock()
+    mock_index.return_value = {}
+    mock_status.return_value = {}
+
+    engine = ChatEngine(".")
+    snapshot = {
+        'known_surfaces': {'vscode_panel': 'vscode-extension/src/extension.ts'},
+        'server': {'reachable': True, 'url': 'http://127.0.0.1:8005'},
+        'ollama': {'reachable': True, 'url': 'http://127.0.0.1:11434'},
+        'web': {'enabled': True, 'summary': 'enabled (optional; explicit requests only)'},
+        'commands': ['generate', 'research', 'status'],
+    }
+
+    with patch.object(engine, 'get_self_awareness_snapshot', return_value=snapshot), \
+         patch('src.tools.commanding.handlers.repo.retrieve_relevant_snippets', return_value=[]):
+        response = engine.execute({
+            'action': 'research',
+            'goal': 'Add a Clear Chat button to the VS Code panel',
+        })
+
+    assert 'Research Summary' in response
+    assert 'vscode-extension/src/extension.ts' in response
+    assert 'research → identify files → edit/apply change' in response
 
 
 @patch('src.tools.chat_engine.CodingAgent')

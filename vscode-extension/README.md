@@ -30,6 +30,7 @@ The editor commands are also available from the editor title and context menu.
 cd vscode-extension
 npm install
 npm run compile
+npm run test:smoke
 ```
 
 2. Run the extension in VS Code:
@@ -44,7 +45,7 @@ cd vscode-extension
 npm run package:vsix
 ```
 
-Then install `dist/aicode-local-agent-0.1.1.vsix` from VS Code with `Extensions: Install from VSIX...`.
+Then install `dist/aicode-local-agent-0.1.4.vsix` from VS Code with `Extensions: Install from VSIX...`.
 
 ## Configuration
 

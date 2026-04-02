@@ -1,4 +1,5 @@
 src/**
+smoke/**
 node_modules/**
 .vscode-test/**
 dist/**

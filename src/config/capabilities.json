@@ -12,5 +12,11 @@
   "local_api_server": true,
   "vscode_integration": true,
   "lightweight_status": true,
-  "web_fetch": false
+  "web_fetch": true,
+  "web_policy": {
+    "enabled": true,
+    "mode": "optional",
+    "requires_explicit_request": true,
+    "provider": "doc_fetcher"
+  }
 }

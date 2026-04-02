@@ -1,0 +1,28 @@
+[
+  {
+    "name": "feature_request_routes_to_research",
+    "prompt": "Add a Clear Chat button to the VS Code panel",
+    "expected_action": "research",
+    "response_must_include": [
+      "vscode-extension/src/extension.ts",
+      "Suggested workflow: research"
+    ]
+  },
+  {
+    "name": "history_request_routes_to_research",
+    "prompt": "Add recent command history with click-to-replay",
+    "expected_action": "research",
+    "response_must_include": [
+      "vscode-extension/src/extension.ts"
+    ]
+  },
+  {
+    "name": "self_awareness_snapshot_is_available",
+    "prompt": "are you self aware?",
+    "expected_action": "self_aware_summary",
+    "response_must_include": [
+      "VS Code panel",
+      "Web research"
+    ]
+  }
+]

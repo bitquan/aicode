@@ -153,6 +153,11 @@ def _handle_custom_llm(engine: "ChatEngine", request: dict[str, Any]) -> str:
 
 def _handle_help_summary(engine: "ChatEngine", request: dict[str, Any]) -> str:
     """Return a concise conversational capability summary."""
+    awareness = engine.get_self_awareness_snapshot()
+    server = awareness["server"]
+    ollama = awareness["ollama"]
+    web = awareness["web"]
+    commands_preview = ", ".join(awareness["commands"][:10])
     engine._log_interaction("help", "help_summary", True)
     return (
         "👋 I can help with coding tasks across your repo.\n"
@@ -160,7 +165,12 @@ def _handle_help_summary(engine: "ChatEngine", request: dict[str, Any]) -> str:
         "  • Quality & Ops: coverage, security scan, deps, cost optimize, status\n"
         "  • Team tools: team kb, audit trail, rbac, team analytics\n"
         "  • Architecture tools: analyze diagram, analyze schema, visualize diff\n"
-        "Try: 'status', 'security scan src/', or 'analyze schema'."
+        f"  • Self-awareness: VS Code panel = {awareness['known_surfaces']['vscode_panel']}\n"
+        f"    Server = {'up' if server['reachable'] else 'down'} at {server['url']}\n"
+        f"    Ollama = {'reachable' if ollama['reachable'] else 'unreachable'} at {ollama['url']}\n"
+        f"    Web research = {web['summary']}\n"
+        f"  • Executable actions: {commands_preview}, ...\n"
+        "Try: 'status', 'readiness', 'research add a clear chat button to the VS Code panel', or 'analyze schema'."
     )
 
 
@@ -171,7 +181,25 @@ def _handle_clarify(engine: "ChatEngine", request: dict[str, Any]) -> str:
     return (
         "❓ I want to make sure I route this correctly.\n"
         f"Your prompt: {original or '(empty)'}\n"
-        "Reply with one of: generate code, fix a file, review code, debug, search, repo summary, or status."
+        "Reply with one of: generate code, fix a file, review code, debug, research, search, repo summary, or status."
+    )
+
+
+def _handle_self_aware_summary(engine: "ChatEngine", request: dict[str, Any]) -> str:
+    """Return a live capability and runtime awareness snapshot."""
+    awareness = engine.get_self_awareness_snapshot()
+    server = awareness["server"]
+    ollama = awareness["ollama"]
+    web = awareness["web"]
+    commands_preview = ", ".join(awareness["commands"][:14])
+    engine._log_interaction("self aware", "self_aware_summary", True)
+    return (
+        "🪞 Self-Awareness Snapshot\n"
+        f"  • VS Code panel: {awareness['known_surfaces']['vscode_panel']}\n"
+        f"  • Server: {'up' if server['reachable'] else 'down'} ({server['url']})\n"
+        f"  • Ollama: {'reachable' if ollama['reachable'] else 'unreachable'} ({ollama['url']})\n"
+        f"  • Web research: {web['summary']}\n"
+        f"  • Executable actions: {commands_preview}"
     )
 
 
@@ -183,5 +211,6 @@ OPS_HANDLERS = {
     "_handle_agent_route": _handle_agent_route,
     "_handle_custom_llm": _handle_custom_llm,
     "_handle_help_summary": _handle_help_summary,
+    "_handle_self_aware_summary": _handle_self_aware_summary,
     "_handle_clarify": _handle_clarify,
 }

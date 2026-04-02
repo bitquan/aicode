@@ -16,14 +16,17 @@ UNKNOWN_ACTION_MESSAGE = (
     "'generate docs <file>', 'generate api <file>', 'resolve dependencies', "
     "'optimize costs', 'team kb <query>', 'audit trail', 'rbac', 'model route <task>', "
     "'team analytics', 'language summary <path>', 'framework expert <task>', "
-    "'search <query>', 'browse <path>', 'learn', 'self build', or 'status'"
+    "'search <query>', 'browse <path>', 'research <goal>', 'self-aware summary', "
+    "'learn', 'self build', or 'status'"
 )
 
 ACTION_HANDLER_METHODS = {
     "generate": "_handle_generate",
     "edit": "_handle_edit",
     "autofix": "_handle_autofix",
+    "research": "_handle_research",
     "search": "_handle_search",
+    "readiness": "_handle_readiness",
     "status": "_handle_status",
     "remember": "_handle_remember",
     "user_learn": "_handle_user_learn",
@@ -64,6 +67,7 @@ ACTION_HANDLER_METHODS = {
     "schema_analyze": "_handle_schema_analyze",
     "diff_visualize": "_handle_diff_visualize",
     "help_summary": "_handle_help_summary",
+    "self_aware_summary": "_handle_self_aware_summary",
     "repo_summary": "_handle_repo_summary",
     "clarify": "_handle_clarify",
 }
